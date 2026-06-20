@@ -23,13 +23,6 @@ import {
 import * as XLSX from "xlsx";
 import { emptyBill, splitwiserActions } from "./store";
 
-const aiBillParserConfig = {
-  endpoint: process.env.REACT_APP_AZURE_OPENAI_ENDPOINT,
-  apiKey: process.env.REACT_APP_AZURE_OPENAI_API_KEY,
-  deployment: "gpt-5.4",
-  apiVersion: "2025-03-01-preview",
-};
-
 function normalizeNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -136,67 +129,33 @@ async function fileToText(file) {
 }
 
 async function analyzeBillWithAi({ file }) {
-  if (
-    !aiBillParserConfig.endpoint ||
-    !aiBillParserConfig.apiKey ||
-    !aiBillParserConfig.deployment
-  ) {
-    throw new Error(
-      "Add AI endpoint, API key, and deployment name in .env.local, then restart the dev server.",
-    );
-  }
+  const fileData = await fileToDataUrl(file);
 
-  const endpoint = aiBillParserConfig.endpoint.replace(/\/$/, "");
-  const url = `${endpoint}/openai/deployments/${encodeURIComponent(aiBillParserConfig.deployment)}/chat/completions?api-version=${aiBillParserConfig.apiVersion}`;
-  const content = [
-    {
-      type: "text",
-      text: "Extract this bill into strict JSON. Return only JSON with keys: merchant, date, currency, subtotal, tax, serviceCharge, discount, total, items. Each item must have name, quantity, price. Use numbers for money. If unsure, infer carefully and keep item prices as line totals.",
-    },
-  ];
-
-  if (file.type.startsWith("image/")) {
-    content.push({
-      type: "image_url",
-      image_url: { url: await fileToDataUrl(file) },
-    });
-  } else {
-    const text = await fileToText(file);
-    content.push({ type: "text", text: `Bill text:\n${text.slice(0, 18000)}` });
-  }
-
-  const response = await fetch(url, {
+  const response = await fetch("/api/analyze-bill", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "api-key": aiBillParserConfig.apiKey,
     },
     body: JSON.stringify({
-      temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content: "You are a precise restaurant and shopping bill parser.",
-        },
-        { role: "user", content },
-      ],
+      fileData,
+      fileType: file.type,
     }),
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(
-      `AI bill parser request failed (${response.status}). ${detail.slice(0, 240)}`,
-    );
+    const text = await response.text();
+    throw new Error(text);
   }
 
   const data = await response.json();
   const raw = data.choices?.[0]?.message?.content || "{}";
+
   const jsonText = raw
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/```$/i, "")
     .trim();
+
   return sanitizeParsedBill(JSON.parse(jsonText));
 }
 
