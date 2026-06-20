@@ -23,10 +23,11 @@ const env = loadEnvLocal();
 module.exports = {
   entry: "./src/index.jsx",
   output: {
-    path: path.resolve(__dirname, "dist"),
-    filename: "bundle.[contenthash].js",
-    clean: true
-  },
+  path: path.resolve(__dirname, "dist"),
+  filename: "bundle.[contenthash].js",
+  clean: true,
+  publicPath: "/"
+},
   resolve: {
     extensions: [".js", ".jsx"]
   },
