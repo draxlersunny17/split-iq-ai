@@ -1,0 +1,29 @@
+{
+  "name": "splitwiser-ai",
+  "version": "1.0.0",
+  "description": "Professional AI bill splitting app powered by React and Webpack.",
+  "private": true,
+  "scripts": {
+    "start": "webpack serve --mode development --open",
+    "build": "webpack --mode production",
+    "preview": "webpack serve --mode production"
+  },
+  "dependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-env": "^7.26.0",
+    "@babel/preset-react": "^7.26.3",
+    "@reduxjs/toolkit": "^2.12.0",
+    "babel-loader": "^9.2.1",
+    "css-loader": "^7.1.2",
+    "html-webpack-plugin": "^5.6.3",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-redux": "^9.3.0",
+    "style-loader": "^4.0.0",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.2.0",
+    "xlsx": "^0.18.5"
+  }
+}
