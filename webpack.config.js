@@ -55,8 +55,6 @@ module.exports = {
     new webpack.DefinePlugin({
       "process.env.REACT_APP_AZURE_OPENAI_ENDPOINT": JSON.stringify(env.REACT_APP_AZURE_OPENAI_ENDPOINT || ""),
       "process.env.REACT_APP_AZURE_OPENAI_API_KEY": JSON.stringify(env.REACT_APP_AZURE_OPENAI_API_KEY || ""),
-      "process.env.REACT_APP_AZURE_OPENAI_DEPLOYMENT": JSON.stringify(env.REACT_APP_AZURE_OPENAI_DEPLOYMENT || ""),
-      "process.env.REACT_APP_AZURE_OPENAI_API_VERSION": JSON.stringify(env.REACT_APP_AZURE_OPENAI_API_VERSION || "2024-10-21")
     }),
     new HtmlWebpackPlugin({
       template: "./public/index.html",
