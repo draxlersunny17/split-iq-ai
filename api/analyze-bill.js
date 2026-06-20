@@ -11,13 +11,41 @@ export default async function handler(req, res) {
     const deployment = "gpt-5.4";
     const apiVersion = "2025-03-01-preview";
 
-const url =endpoint.replace(/\/$/, "") + `/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
+    const url =
+      endpoint.replace(/\/$/, "") +
+      `/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`;
 
     const content = [
       {
         type: "text",
-        text:
-          "Extract this bill into strict JSON with: merchant, date, currency, subtotal, tax, serviceCharge, discount, total, items. Each item has name, quantity, price.",
+        text: `Extract this bill into strict JSON.
+Return:
+{
+  merchant,
+  date,
+  currency,
+  subtotal,
+  tax,
+  serviceCharge,
+  discount,
+  total,
+  items:[]
+}
+For each item return:
+{
+  name,
+  quantity,
+  price
+}
+
+IMPORTANT:
+- price MUST be the FINAL LINE TOTAL.
+- If quantity is 2 and unit price is 250, return:
+  quantity: 2,
+  price: 500
+- Never return unit price.
+- quantity × unit price = price.
+- Return ONLY valid JSON.`,
       },
     ];
 
