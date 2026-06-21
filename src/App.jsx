@@ -346,15 +346,13 @@ async function generateShareMessage({ bill, people, split }) {
 
 function App() {
   const dispatch = useDispatch();
-  const { view, people, bill, status } = useSelector(
+  const { view, people, bill, status, insightLoading, insight } = useSelector(
     (state) => state.splitwiser,
   );
   const split = useMemo(() => calculateSplit(bill, people), [bill, people]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [payerId, setPayerId] = useState(null);
   const [animKey, setAnimKey] = useState(view);
-  const [insight, setInsight] = useState(null);
-  const [insightLoading, setInsightLoading] = useState(false);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [qrTarget, setQrTarget] = useState(null);
 
@@ -411,12 +409,12 @@ function App() {
           message: "Bill parsed — assign items and review.",
         }),
       );
-      setInsight(null);
-      setInsightLoading(true);
+      dispatch(splitwiserActions.setInsight(null));
+      dispatch(splitwiserActions.setInsightLoading(true));
       fetchBillInsights({ bill: parsed, people })
-        .then(setInsight)
+        .then((insight) => dispatch(splitwiserActions.setInsight(insight)))
         .catch(() => {})
-        .finally(() => setInsightLoading(false));
+        .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
     } catch (error) {
       dispatch(
         splitwiserActions.setStatus({ kind: "error", message: error.message }),
@@ -459,12 +457,12 @@ function App() {
           message: `Merged ${files.length} bills — ${merged.items.length} items total.`,
         }),
       );
-      setInsight(null);
-      setInsightLoading(true);
+      dispatch(splitwiserActions.setInsight(null));
+      dispatch(splitwiserActions.setInsightLoading(true));
       fetchBillInsights({ bill: merged, people })
-        .then(setInsight)
+        .then((insight) => dispatch(splitwiserActions.setInsight(insight)))
         .catch(() => {})
-        .finally(() => setInsightLoading(false));
+        .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
     } catch (error) {
       dispatch(
         splitwiserActions.setStatus({ kind: "error", message: error.message }),
