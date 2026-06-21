@@ -32,34 +32,20 @@ function normalizeNumber(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-// Converts any date string the AI might return into YYYY-MM-DD for <input type="date">
-// Complexity is 12 You must be kidding
-function normalizeDate(raw) {
-  if (!raw) return "";
-  const s = String(raw).trim();
-  // Already YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // Try native Date parse (handles "June 21, 2026", "21 Jun 2026", ISO variants, etc.)
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) {
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
+function normalizeDate(value) {
+  if (!value) return "";
+
+  // already ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  // DD/MM/YYYY → YYYY-MM-DD
+  const match = value.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (match) {
+    const [, dd, mm, yyyy] = match;
     return `${yyyy}-${mm}-${dd}`;
   }
-  // DD/MM/YYYY or DD-MM-YYYY
-  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-  if (dmy) {
-    const [, dd, mm, yyyy] = dmy;
-    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  }
-  // MM/DD/YYYY
-  const mdy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-  if (mdy) {
-    const [, mm, dd, yyyy] = mdy;
-    return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
-  }
-  return ""; // unrecognised - leave blank rather than show garbage
+
+  return "";
 }
 
 function formatMoney(value, currency = "INR") {
@@ -92,7 +78,7 @@ function sanitizeParsedBill(parsed) {
 
   return {
     merchant: String(parsed.merchant || parsed.vendor || ""),
-    date: normalizeDate(parsed.date || ""),
+    date: normalizeDate(parsed.date),
     currency: String(parsed.currency || "INR").toUpperCase(),
     subtotal,
     tax,
