@@ -1,5 +1,3 @@
-import React, { useMemo, useState } from "react";
-import { useDispatch, useSelector } from "react-redux";
 import {
   AlertCircle,
   ArrowRight,
@@ -11,15 +9,21 @@ import {
   FileSpreadsheet,
   Home,
   Loader2,
+  Menu,
+  Moon,
   Plus,
   ReceiptText,
   RotateCcw,
   ShieldCheck,
   Split,
+  Sun,
   Trash2,
   Upload,
   Users,
+  X,
 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useDispatch, useSelector } from "react-redux";
 import * as XLSX from "xlsx";
 import { emptyBill, splitwiserActions } from "./store";
 
@@ -165,6 +169,34 @@ function App() {
     (state) => state.splitwiser,
   );
   const split = useMemo(() => calculateSplit(bill, people), [bill, people]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [dark, setDark] = useState(() => {
+    try {
+      return (
+        localStorage.getItem("theme") === "dark" ||
+        (!localStorage.getItem("theme") &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches)
+      );
+    } catch {
+      return false;
+    }
+  });
+
+  function toggleTheme() {
+    setDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle("dark", next);
+      try {
+        localStorage.setItem("theme", next ? "dark" : "light");
+      } catch {}
+      return next;
+    });
+  }
+
+  // Sync class on mount
+  useState(() => {
+    document.documentElement.classList.toggle("dark", dark);
+  });
 
   function setView(nextView) {
     dispatch(splitwiserActions.setView(nextView));
@@ -249,18 +281,34 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">
-            <ReceiptText size={24} />
+      {sidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      <aside className={`sidebar${sidebarOpen ? " open" : ""}`}>
+        <div className="sidebar-header">
+          <div className="brand">
+            <div className="brand-mark">
+              <ReceiptText size={22} />
+            </div>
+            <div>
+              <strong>Splitwiser AI</strong>
+              <span>Smart bill splitting</span>
+            </div>
           </div>
-          <div>
-            <strong>Splitwiser AI</strong>
-            <span>Smart bill splitting</span>
-          </div>
+          <button
+            className="sidebar-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
         </div>
         <div className="side-note">
-          <ShieldCheck size={16} />
+          <ShieldCheck size={15} />
           <span>Session-only workspace</span>
         </div>
         <nav>
@@ -268,9 +316,12 @@ function App() {
             <button
               key={id}
               className={view === id ? "active" : ""}
-              onClick={() => setView(id)}
+              onClick={() => {
+                setView(id);
+                setSidebarOpen(false);
+              }}
             >
-              <Icon size={18} />
+              <Icon size={17} />
               {label}
             </button>
           ))}
@@ -279,11 +330,28 @@ function App() {
 
       <main>
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Professional expense settlement</p>
-            <h1>{viewTitle(view)}</h1>
+          <div className="topbar-left">
+            <button
+              className="hamburger"
+              onClick={() => setSidebarOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu size={20} />
+            </button>
+            <div>
+              <p className="eyebrow">Professional expense settlement</p>
+              <h1>{viewTitle(view)}</h1>
+            </div>
           </div>
           <div className="actions">
+            <button
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+              title={dark ? "Light mode" : "Dark mode"}
+            >
+              {dark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
             <button
               className="ghost"
               onClick={() => dispatch(splitwiserActions.resetCurrentSplit())}
