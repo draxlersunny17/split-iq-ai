@@ -9,7 +9,7 @@ export const emptyBill = {
   serviceCharge: 0,
   discount: 0,
   total: 0,
-  items: []
+  items: [],
 };
 
 function normalizeNumber(value) {
@@ -18,11 +18,18 @@ function normalizeNumber(value) {
 }
 
 function recalculateBill(nextBill) {
-  const subtotal = nextBill.items.reduce((sum, item) => sum + normalizeNumber(item.price), 0);
+  const subtotal = nextBill.items.reduce(
+    (sum, item) => sum + normalizeNumber(item.price),
+    0,
+  );
   return {
     ...nextBill,
     subtotal,
-    total: subtotal + normalizeNumber(nextBill.tax) + normalizeNumber(nextBill.serviceCharge) - normalizeNumber(nextBill.discount)
+    total:
+      subtotal +
+      normalizeNumber(nextBill.tax) +
+      normalizeNumber(nextBill.serviceCharge) -
+      normalizeNumber(nextBill.discount),
   };
 }
 
@@ -32,10 +39,12 @@ const appSlice = createSlice({
     view: "dashboard",
     people: [],
     bill: emptyBill,
+    insight: null,
+    insightLoading: false,
     status: {
       kind: "idle",
-      message: ""
-    }
+      message: "",
+    },
   },
   reducers: {
     setView(state, action) {
@@ -55,21 +64,29 @@ const appSlice = createSlice({
         ...state.bill,
         items: [
           ...state.bill.items,
-          { id: crypto.randomUUID(), name: "", quantity: 1, price: 0, assignedTo: [] }
-        ]
+          {
+            id: crypto.randomUUID(),
+            name: "",
+            quantity: 1,
+            price: 0,
+            assignedTo: [],
+          },
+        ],
       });
     },
     updateItem(state, action) {
       const { id, patch } = action.payload;
       state.bill = recalculateBill({
         ...state.bill,
-        items: state.bill.items.map((item) => (item.id === id ? { ...item, ...patch } : item))
+        items: state.bill.items.map((item) =>
+          item.id === id ? { ...item, ...patch } : item,
+        ),
       });
     },
     removeItem(state, action) {
       state.bill = recalculateBill({
         ...state.bill,
-        items: state.bill.items.filter((item) => item.id !== action.payload)
+        items: state.bill.items.filter((item) => item.id !== action.payload),
       });
     },
     toggleAssignee(state, action) {
@@ -90,28 +107,38 @@ const appSlice = createSlice({
     },
     updatePerson(state, action) {
       const { id, name } = action.payload;
-      state.people = state.people.map((person) => (person.id === id ? { ...person, name } : person));
+      state.people = state.people.map((person) =>
+        person.id === id ? { ...person, name } : person,
+      );
     },
     removePerson(state, action) {
       const id = action.payload;
       state.people = state.people.filter((person) => person.id !== id);
       state.bill.items = state.bill.items.map((item) => ({
         ...item,
-        assignedTo: item.assignedTo.filter((personId) => personId !== id)
+        assignedTo: item.assignedTo.filter((personId) => personId !== id),
       }));
     },
     resetCurrentSplit(state) {
       state.people = [];
       state.bill = emptyBill;
+      state.insight = null;
+      state.insightLoading = false;
       state.status = { kind: "idle", message: "" };
-    }
-  }
+    },
+    setInsight(state, action) {
+      state.insight = action.payload;
+    },
+    setInsightLoading(state, action) {
+      state.insightLoading = action.payload;
+    },
+  },
 });
 
 export const splitwiserActions = appSlice.actions;
 
 export const store = configureStore({
   reducer: {
-    splitwiser: appSlice.reducer
-  }
+    splitwiser: appSlice.reducer,
+  },
 });
