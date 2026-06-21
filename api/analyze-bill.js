@@ -18,34 +18,38 @@ export default async function handler(req, res) {
     const content = [
       {
         type: "text",
-        text: `Extract this bill into strict JSON.
-Return:
+       text: `Extract this bill into strict JSON.
+
+Return ONLY valid JSON in this format:
+
 {
-  merchant,
-  date,
-  currency,
-  subtotal,
-  tax,
-  serviceCharge,
-  discount,
-  total,
-  items:[]
-}
-For each item return:
-{
-  name,
-  quantity,
-  price
+  "merchant": string,
+  "date": "DD/MM/YYYY",
+  "currency": string,
+  "subtotal": number,
+  "tax": number,
+  "serviceCharge": number,
+  "discount": number,
+  "total": number,
+  "items": [
+    {
+      "name": string,
+      "quantity": number,
+      "price": number
+    }
+  ]
 }
 
-IMPORTANT:
-- price MUST be the FINAL LINE TOTAL.
-- If quantity is 2 and unit price is 250, return:
-  quantity: 2,
-  price: 500
-- Never return unit price.
-- quantity × unit price = price.
-- Return ONLY valid JSON.`,
+STRICT RULES:
+- date MUST always be in DD/MM/YYYY format only
+- never use YYYY-MM-DD
+- never use YY format
+- always pad with 2 digits (01/02/2026)
+- if day > 12, use it as day
+- if month > 12, use it as day/month accordingly
+- quantity × unit price MUST equal price
+- price MUST be line total (not unit price)
+- return ONLY valid JSON, no markdown, no explanation`,
       },
     ];
 
