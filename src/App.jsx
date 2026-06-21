@@ -418,7 +418,7 @@ function App() {
 
 function viewTitle(view) {
   return {
-    dashboard: "Control center",
+    dashboard: "Overview",
     upload: "Upload bill",
     split: "Assign and split",
     people: "People",
@@ -432,12 +432,12 @@ function Dashboard({ bill, people, split, setView }) {
     <section className="dashboard-grid">
       <div className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">Current bill</p>
-          <h2>{bill.merchant || "Ready for a real bill"}</h2>
+          <p className="eyebrow">Active Bill</p>
+          <h2>{bill.merchant || "No bill loaded yet"}</h2>
           <p>
             {hasBill
               ? "Review assignments, export the split, and settle with confidence."
-              : "Upload a receipt and add participants to begin a live split."}
+              : "Upload a receipt to automatically extract and split expenses."}
           </p>
         </div>
         <div className="hero-total">
@@ -448,7 +448,7 @@ function Dashboard({ bill, people, split, setView }) {
           </small>
         </div>
         <button onClick={() => setView("upload")}>
-          Analyze a bill <ArrowRight size={18} />
+          Process Bill <ArrowRight size={18} />
         </button>
       </div>
       <Metric
@@ -505,7 +505,7 @@ function UploadView({ onAnalyze, loading }) {
         <Bot size={34} />
       </div>
       <div>
-        <h2>Upload receipt, invoice, or bill text</h2>
+        <h2>Upload Receipt or Invoice</h2>
         <p>
           Upload a receipt and let Splitwiser AI extract items, totals, taxes,
           and charges for review.
@@ -513,7 +513,7 @@ function UploadView({ onAnalyze, loading }) {
       </div>
       <label className="file-picker">
         <Upload size={20} />
-        <span>{loading ? "Analyzing..." : "Choose bill file"}</span>
+        <span>{loading ? "Analyzing..." : "Select File"}</span>
         <input
           disabled={loading}
           type="file"
@@ -611,7 +611,7 @@ function SplitView({ bill, people, split }) {
           {bill.items.length === 0 && (
             <EmptyState
               icon={ReceiptText}
-              title="No bill items yet"
+              title="No items found"
               message="Upload a bill or add line items manually."
             />
           )}
