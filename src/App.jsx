@@ -1,19 +1,27 @@
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowLeftRight,
   ArrowRight,
   BarChart3,
   Bot,
+  Check,
   CheckCircle2,
   ChefHat,
   CircleDollarSign,
+  Copy,
+  FilePlus2,
   FileSpreadsheet,
+  Globe,
   Home,
+  MessageCircle,
   Moon,
   Plus,
+  QrCode,
   ReceiptText,
   RotateCcw,
   ShieldCheck,
+  Sparkles,
   Split,
   Sun,
   Trash2,
@@ -23,6 +31,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import * as XLSX from "xlsx";
@@ -65,6 +74,115 @@ function formatMoney(value, currency = "INR") {
 function splitAmount(amount, ids) {
   if (!ids.length) return 0;
   return normalizeNumber(amount) / ids.length;
+}
+
+/* ─────────────────── Smart Item Auto-Tagger ─────────────────── */
+const TAG_RULES = [
+  [
+    "🍺",
+    /beer|alcohol|wine|whisky|whiskey|vodka|rum|gin|cocktail|lager|ale|spirits|brandy|champagne|mojito|shot|pint|draught/i,
+  ],
+  [
+    "☕",
+    /coffee|espresso|latte|cappuccino|americano|mocha|\btea\b|chai|macchiato|cold.?brew|frappe/i,
+  ],
+  [
+    "🍰",
+    /dessert|cake|ice.?cream|waffle|brownie|pudding|mousse|pastry|cookie|pie|cheesecake|gelato|sorbet|sundae|tiramisu/i,
+  ],
+  [
+    "🥤",
+    /juice|soda|\bwater\b|cola|pepsi|sprite|lemonade|smoothie|milkshake|soft.?drink|mocktail|lassi|nimbu/i,
+  ],
+];
+
+function getItemTag(name) {
+  for (const [emoji, re] of TAG_RULES) {
+    if (re.test(name)) return emoji;
+  }
+  return "🍽️";
+}
+
+/* ─────────────────── Bill Anomaly Detector ─────────────────── */
+function detectAnomalies(bill) {
+  const anomalies = [];
+  const subtotal = bill.items.reduce((s, i) => s + normalizeNumber(i.price), 0);
+  if (subtotal <= 0) return anomalies;
+
+  const scPct = (normalizeNumber(bill.serviceCharge) / subtotal) * 100;
+  if (scPct > 15)
+    anomalies.push({
+      type: "warn",
+      message: `Service charge is ${scPct.toFixed(1)}% — unusually high (typical ≤12.5%)`,
+    });
+
+  const taxPct = (normalizeNumber(bill.tax) / subtotal) * 100;
+  if (taxPct > 20)
+    anomalies.push({
+      type: "warn",
+      message: `Tax rate is ${taxPct.toFixed(1)}% — above typical GST rates (≤18%)`,
+    });
+
+  const expected =
+    subtotal +
+    normalizeNumber(bill.tax) +
+    normalizeNumber(bill.serviceCharge) -
+    normalizeNumber(bill.discount);
+  const stated = normalizeNumber(bill.total);
+  if (stated > 0 && Math.abs(expected - stated) / stated > 0.05)
+    anomalies.push({
+      type: "error",
+      message: `Total mismatch: items sum to ${formatMoney(expected, bill.currency)}, bill says ${formatMoney(stated, bill.currency)}`,
+    });
+
+  const dominant = bill.items
+    .slice()
+    .sort((a, b) => normalizeNumber(b.price) - normalizeNumber(a.price))[0];
+  if (dominant && normalizeNumber(dominant.price) / subtotal > 0.4)
+    anomalies.push({
+      type: "info",
+      message: `"${dominant.name}" makes up ${((normalizeNumber(dominant.price) / subtotal) * 100).toFixed(0)}% of the bill subtotal`,
+    });
+
+  return anomalies;
+}
+
+/* ─────────────────── Duplicate Item Detector ─────────────────── */
+function strSimilarity(a, b) {
+  const s = a.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const t = b.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!s.length || !t.length) return 0;
+  if (s === t) return 1;
+  const longer = s.length >= t.length ? s : t;
+  const shorter = s.length < t.length ? s : t;
+  if (shorter.length < 3) return 0;
+  if (longer.includes(shorter) && shorter.length / longer.length > 0.75)
+    return 1;
+  const dp = Array.from({ length: shorter.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= longer.length; i++) {
+    let prev = i;
+    for (let j = 1; j <= shorter.length; j++) {
+      const cur =
+        longer[i - 1] === shorter[j - 1]
+          ? dp[j - 1]
+          : 1 + Math.min(dp[j - 1], dp[j], prev);
+      dp[j - 1] = prev;
+      prev = cur;
+    }
+    dp[shorter.length] = prev;
+  }
+  return (longer.length - dp[shorter.length]) / longer.length;
+}
+
+function findDuplicates(items) {
+  const pairs = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (strSimilarity(items[i].name, items[j].name) > 0.82)
+        pairs.push([items[i].name, items[j].name]);
+    }
+  }
+  return pairs;
 }
 
 function sanitizeParsedBill(parsed) {
@@ -196,6 +314,34 @@ async function analyzeBillWithAi({ file }) {
   return sanitizeParsedBill(JSON.parse(jsonText));
 }
 
+async function fetchBillInsights({ bill, people }) {
+  const response = await fetch("/api/bill-insights", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bill, people }),
+  });
+  if (!response.ok) throw new Error("Insights unavailable");
+  const data = await response.json();
+  const raw = data.choices?.[0]?.message?.content || "{}";
+  const jsonText = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  return JSON.parse(jsonText);
+}
+
+async function generateShareMessage({ bill, people, split }) {
+  const response = await fetch("/api/share-message", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bill, people, split }),
+  });
+  if (!response.ok) throw new Error("Message generation failed");
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
 /* ─────────────────── App ─────────────────── */
 
 function App() {
@@ -207,6 +353,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [payerId, setPayerId] = useState(null);
   const [animKey, setAnimKey] = useState(view);
+  const [insight, setInsight] = useState(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [qrTarget, setQrTarget] = useState(null);
 
   const [dark, setDark] = useState(() => {
     try {
@@ -261,6 +411,60 @@ function App() {
           message: "Bill parsed — assign items and review.",
         }),
       );
+      setInsight(null);
+      setInsightLoading(true);
+      fetchBillInsights({ bill: parsed, people })
+        .then(setInsight)
+        .catch(() => {})
+        .finally(() => setInsightLoading(false));
+    } catch (error) {
+      dispatch(
+        splitwiserActions.setStatus({ kind: "error", message: error.message }),
+      );
+    }
+  }
+
+  async function handleMerge(files) {
+    if (!files.length) return;
+    dispatch(
+      splitwiserActions.setStatus({
+        kind: "loading",
+        message: `Analyzing ${files.length} bills with AI…`,
+      }),
+    );
+    try {
+      const results = await Promise.all(
+        files.map((f) => analyzeBillWithAi({ file: f })),
+      );
+      const merged = {
+        merchant:
+          results
+            .map((r) => r.merchant)
+            .filter(Boolean)
+            .join(" + ") || "",
+        date: results[0]?.date || "",
+        currency: results[0]?.currency || "INR",
+        subtotal: results.reduce((s, r) => s + r.subtotal, 0),
+        tax: results.reduce((s, r) => s + r.tax, 0),
+        serviceCharge: results.reduce((s, r) => s + r.serviceCharge, 0),
+        discount: results.reduce((s, r) => s + r.discount, 0),
+        total: results.reduce((s, r) => s + r.total, 0),
+        items: results.flatMap((r) => r.items),
+      };
+      dispatch(splitwiserActions.setBill(merged));
+      setView("split");
+      dispatch(
+        splitwiserActions.setStatus({
+          kind: "success",
+          message: `Merged ${files.length} bills — ${merged.items.length} items total.`,
+        }),
+      );
+      setInsight(null);
+      setInsightLoading(true);
+      fetchBillInsights({ bill: merged, people })
+        .then(setInsight)
+        .catch(() => {})
+        .finally(() => setInsightLoading(false));
     } catch (error) {
       dispatch(
         splitwiserActions.setStatus({ kind: "error", message: error.message }),
@@ -416,7 +620,11 @@ function App() {
             />
           )}
           {view === "upload" && (
-            <UploadView onAnalyze={handleAnalyze} loading={isLoading} />
+            <UploadView
+              onAnalyze={handleAnalyze}
+              onMerge={handleMerge}
+              loading={isLoading}
+            />
           )}
           {view === "split" && (
             <SplitView
@@ -424,6 +632,8 @@ function App() {
               people={people}
               split={split}
               loading={isLoading}
+              insight={insight}
+              insightLoading={insightLoading}
             />
           )}
           {view === "settle" && (
@@ -433,6 +643,8 @@ function App() {
               people={people}
               payerId={payerId}
               setPayerId={setPayerId}
+              onShareOpen={() => setShareModalOpen(true)}
+              onQrOpen={setQrTarget}
             />
           )}
           {view === "people" && <PeopleView people={people} />}
@@ -440,6 +652,21 @@ function App() {
       </main>
 
       <BottomNav view={view} setView={setView} nav={nav} />
+      {shareModalOpen && (
+        <ShareMessageModal
+          bill={bill}
+          people={people}
+          split={split}
+          onClose={() => setShareModalOpen(false)}
+        />
+      )}
+      {qrTarget && (
+        <QrModal
+          transaction={qrTarget}
+          bill={bill}
+          onClose={() => setQrTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -565,8 +792,9 @@ function Metric({ index, icon: Icon, label, value }) {
 
 /* ─────────────────── Upload ─────────────────── */
 
-function UploadView({ onAnalyze, loading }) {
+function UploadView({ onAnalyze, onMerge, loading }) {
   const [dragging, setDragging] = useState(false);
+  const [mergeFiles, setMergeFiles] = useState([]);
 
   function handleDrop(e) {
     e.preventDefault();
@@ -578,41 +806,82 @@ function UploadView({ onAnalyze, loading }) {
   if (loading) return <SkeletonBill />;
 
   return (
-    <section
-      className={`upload-zone${dragging ? " dragging" : ""}`}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setDragging(true);
-      }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
-    >
-      <div className="upload-icon-wrap">
-        <Bot size={30} />
+    <>
+      <section
+        className={`upload-zone${dragging ? " dragging" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+      >
+        <div className="upload-icon-wrap">
+          <Bot size={30} />
+        </div>
+        <div>
+          <h2>Upload your receipt or invoice</h2>
+          <p>
+            AI extracts every line item, tax, service charge, and total — ready
+            to split in seconds. Drag &amp; drop or click below.
+          </p>
+        </div>
+        <label className="file-picker">
+          <Upload size={18} />
+          <span>Choose file</span>
+          <input
+            type="file"
+            accept="image/*,.txt,.csv,.json"
+            onChange={(e) => onAnalyze(e.target.files?.[0])}
+          />
+        </label>
+        <div className="upload-tags">
+          <span>PNG · JPG</span>
+          <span>PDF text</span>
+          <span>TXT · CSV</span>
+          <span>JSON</span>
+        </div>
+      </section>
+
+      <div className="merge-card panel">
+        <div className="merge-card-head">
+          <div className="merge-icon">
+            <FilePlus2 size={18} />
+          </div>
+          <div>
+            <strong>Merge multiple bills</strong>
+            <p>
+              Combine 2+ receipts into one split session — AI analyzes each and
+              merges all items automatically
+            </p>
+          </div>
+        </div>
+        <div className="merge-actions">
+          <label className="file-picker ghost-picker">
+            <Upload size={15} />
+            <span>
+              {mergeFiles.length > 0
+                ? `${mergeFiles.length} file${mergeFiles.length > 1 ? "s" : ""} selected`
+                : "Select files"}
+            </span>
+            <input
+              type="file"
+              accept="image/*,.txt,.csv,.json"
+              multiple
+              onChange={(e) => setMergeFiles(Array.from(e.target.files))}
+            />
+          </label>
+          {mergeFiles.length >= 2 && (
+            <button onClick={() => onMerge(mergeFiles)}>
+              <FilePlus2 size={15} /> Merge {mergeFiles.length} bills
+            </button>
+          )}
+          {mergeFiles.length === 1 && (
+            <span className="muted">Select at least 2 files to merge</span>
+          )}
+        </div>
       </div>
-      <div>
-        <h2>Upload your receipt or invoice</h2>
-        <p>
-          AI extracts every line item, tax, service charge, and total — ready to
-          split in seconds. Drag &amp; drop or click below.
-        </p>
-      </div>
-      <label className="file-picker">
-        <Upload size={18} />
-        <span>Choose file</span>
-        <input
-          type="file"
-          accept="image/*,.txt,.csv,.json"
-          onChange={(e) => onAnalyze(e.target.files?.[0])}
-        />
-      </label>
-      <div className="upload-tags">
-        <span>PNG · JPG</span>
-        <span>PDF text</span>
-        <span>TXT · CSV</span>
-        <span>JSON</span>
-      </div>
-    </section>
+    </>
   );
 }
 
@@ -660,7 +929,7 @@ function SkeletonBill() {
 
 /* ─────────────────── Split view ─────────────────── */
 
-function SplitView({ bill, people, split, loading }) {
+function SplitView({ bill, people, split, loading, insight, insightLoading }) {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState("details");
 
@@ -697,6 +966,7 @@ function SplitView({ bill, people, split, loading }) {
 
   return (
     <div>
+      <InsightCard insight={insight} loading={insightLoading} />
       <div className="split-tabs">
         <button
           className={`split-tab${activeTab === "details" ? " active" : ""}`}
@@ -790,6 +1060,8 @@ function SplitView({ bill, people, split, loading }) {
             />
           </div>
 
+          <AnomalyAlerts bill={bill} />
+
           {people.length > 0 && bill.items.length > 0 && (
             <div className="auto-assign-bar">
               <div className="auto-assign-info">
@@ -822,6 +1094,7 @@ function SplitView({ bill, people, split, loading }) {
           )}
 
           <div className="items">
+            {bill.items.length > 1 && <DuplicateWarning items={bill.items} />}
             {bill.items.length === 0 && (
               <EmptyState
                 icon={ReceiptText}
@@ -887,6 +1160,7 @@ function SplitView({ bill, people, split, loading }) {
                   </button>
                 </div>
                 <div className="item-assignees">
+                  <span className="item-tag-pill">{getItemTag(item.name)}</span>
                   {people.length === 0 && (
                     <span className="muted">Add people to assign.</span>
                   )}
@@ -964,7 +1238,15 @@ function SplitView({ bill, people, split, loading }) {
 
 /* ─────────────────── Settle view ─────────────────── */
 
-function SettleView({ split, bill, people, payerId, setPayerId }) {
+function SettleView({
+  split,
+  bill,
+  people,
+  payerId,
+  setPayerId,
+  onShareOpen,
+  onQrOpen,
+}) {
   const transactions = useMemo(
     () => simplifyDebts(split, payerId),
     [split, payerId],
@@ -997,17 +1279,22 @@ function SettleView({ split, bill, people, payerId, setPayerId }) {
             </div>
           </div>
         </div>
-        <div className="settle-progress-wrap">
-          <div className="settle-progress-bar">
-            <div
-              className="settle-progress-fill"
-              style={{
-                width: transactions.length
-                  ? `${(settledCount / transactions.length) * 100}%`
-                  : "0%",
-              }}
-            />
+        <div className="settle-hc-right">
+          <div className="settle-progress-wrap">
+            <div className="settle-progress-bar">
+              <div
+                className="settle-progress-fill"
+                style={{
+                  width: transactions.length
+                    ? `${(settledCount / transactions.length) * 100}%`
+                    : "0%",
+                }}
+              />
+            </div>
           </div>
+          <button className="ghost settle-share-btn" onClick={onShareOpen}>
+            <MessageCircle size={15} /> Share
+          </button>
         </div>
       </div>
 
@@ -1071,18 +1358,28 @@ function SettleView({ split, bill, people, payerId, setPayerId }) {
                 {formatMoney(tx.amount, bill.currency)}
               </div>
             </div>
-            <button
-              className={`txn-settle-btn${done ? " done" : ""}`}
-              onClick={() => toggleSettled(key)}
-            >
-              {done ? (
-                <>
-                  <CheckCircle2 size={14} /> Settled
-                </>
-              ) : (
-                "Mark settled"
-              )}
-            </button>
+            <div className="txn-actions">
+              <button
+                className="icon-btn"
+                onClick={() => onQrOpen(tx)}
+                title="Payment QR"
+                aria-label="Payment QR"
+              >
+                <QrCode size={14} />
+              </button>
+              <button
+                className={`txn-settle-btn${done ? " done" : ""}`}
+                onClick={() => toggleSettled(key)}
+              >
+                {done ? (
+                  <>
+                    <CheckCircle2 size={14} /> Settled
+                  </>
+                ) : (
+                  "Mark settled"
+                )}
+              </button>
+            </div>
           </div>
         );
       })}
@@ -1216,6 +1513,201 @@ function BottomNav({ view, setView, nav }) {
         );
       })}
     </nav>
+  );
+}
+
+/* ─────────────────── InsightCard ─────────────────── */
+
+function InsightCard({ insight, loading }) {
+  if (loading) {
+    return (
+      <div className="insight-card insight-loading">
+        <Sparkles size={14} className="spin" />
+        <span>AI is reading your bill…</span>
+      </div>
+    );
+  }
+  if (!insight?.summary) return null;
+  return (
+    <div className="insight-card">
+      <div className="insight-meta">
+        <Globe size={13} />
+        <span className="insight-badge">{insight.cuisine}</span>
+        <span className="insight-dot">·</span>
+        <span className="insight-badge">{insight.vibe}</span>
+        <Sparkles size={13} className="insight-sparkle" />
+      </div>
+      <p className="insight-summary">{insight.summary}</p>
+    </div>
+  );
+}
+
+/* ─────────────────── AnomalyAlerts ─────────────────── */
+
+function AnomalyAlerts({ bill }) {
+  const anomalies = detectAnomalies(bill);
+  if (!anomalies.length) return null;
+  return (
+    <div className="anomaly-list">
+      {anomalies.map((a, i) => (
+        <div key={i} className={`anomaly-item anomaly-${a.type}`}>
+          <AlertTriangle size={13} />
+          <span>{a.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────── DuplicateWarning ─────────────────── */
+
+function DuplicateWarning({ items }) {
+  const dupes = findDuplicates(items);
+  if (!dupes.length) return null;
+  return (
+    <div className="duplicate-warning">
+      <Copy size={13} />
+      <span>
+        Possible duplicates:{" "}
+        {dupes.map(([a, b], i) => (
+          <span key={i}>
+            {i > 0 && " · "}
+            &ldquo;{a}&rdquo; &amp; &ldquo;{b}&rdquo;
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────── ShareMessageModal ─────────────────── */
+
+function ShareMessageModal({ bill, people, split, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    generateShareMessage({ bill, people, split })
+      .then(setMsg)
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  function copyMsg() {
+    if (!msg) return;
+    navigator.clipboard.writeText(msg).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal share-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <MessageCircle size={16} />
+            <span>WhatsApp / Telegram</span>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={15} />
+          </button>
+        </div>
+        {loading && (
+          <div className="modal-loading">
+            <Sparkles size={16} className="spin" />
+            <span>Generating message…</span>
+          </div>
+        )}
+        {err && <div className="modal-error">{err}</div>}
+        {!loading && !err && (
+          <>
+            <textarea
+              className="share-textarea"
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              rows={7}
+            />
+            <div className="modal-actions">
+              <button onClick={copyMsg} className={copied ? "btn-success" : ""}>
+                {copied ? (
+                  <>
+                    <Check size={15} /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy size={15} /> Copy message
+                  </>
+                )}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────── QrModal ─────────────────── */
+
+function QrModal({ transaction, bill, onClose }) {
+  const [qrUrl, setQrUrl] = useState("");
+
+  useEffect(() => {
+    const text = [
+      `Pay: ${bill.currency} ${Number(transaction.amount).toFixed(2)}`,
+      `From: ${transaction.from.name}`,
+      `To: ${transaction.to.name}`,
+      bill.merchant ? `For: ${bill.merchant}` : "",
+      bill.date ? `Date: ${bill.date}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    QRCode.toDataURL(text, { width: 220, margin: 2 })
+      .then(setQrUrl)
+      .catch(() => {});
+  }, []);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal qr-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <QrCode size={16} />
+            <span>Payment QR</span>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close">
+            <X size={15} />
+          </button>
+        </div>
+        <div className="qr-body">
+          <div className="qr-from-to">
+            <Avatar name={transaction.from.name} />
+            <div className="qr-from-to-text">
+              <strong>{transaction.from.name}</strong>
+              <span>pays</span>
+              <strong>{transaction.to.name}</strong>
+            </div>
+            <Avatar name={transaction.to.name} />
+          </div>
+          <div className="qr-amount-display">
+            {formatMoney(transaction.amount, bill.currency)}
+          </div>
+          {qrUrl ? (
+            <img src={qrUrl} alt="Payment QR code" className="qr-image" />
+          ) : (
+            <div className="qr-placeholder">
+              <Sparkles size={20} className="spin" />
+            </div>
+          )}
+          <small className="qr-hint">
+            Scan or screenshot to share payment details
+          </small>
+        </div>
+      </div>
+    </div>
   );
 }
 

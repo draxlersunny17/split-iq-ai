@@ -49,6 +49,7 @@ STRICT RULES:
 - if month > 12, use it as day/month accordingly
 - quantity × unit price MUST equal price
 - price MUST be line total (not unit price)
+- Translate ALL item names to English if they are not already in English (Hindi, Arabic, Tamil, Chinese, etc.) — preserve meaning, use English words
 - return ONLY valid JSON, no markdown, no explanation`,
       },
     ];
