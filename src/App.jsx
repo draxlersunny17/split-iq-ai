@@ -16,7 +16,6 @@ import {
   MessageCircle,
   Moon,
   Plus,
-  QrCode,
   ReceiptText,
   RotateCcw,
   ShieldCheck,
@@ -31,7 +30,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import QRCode from "qrcode";
 import { useEffect, useMemo, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import * as XLSX from "xlsx";
@@ -380,7 +378,6 @@ function App() {
   const [animKey, setAnimKey] = useState(view);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareData, setShareData] = useState(null);
-  const [qrTarget, setQrTarget] = useState(null);
 
   const [dark, setDark] = useState(() => {
     try {
@@ -669,7 +666,6 @@ function App() {
                 setShareData(data);
                 setShareModalOpen(true);
               }}
-              onQrOpen={setQrTarget}
             />
           )}
           {view === "people" && <PeopleView people={people} />}
@@ -684,13 +680,6 @@ function App() {
           split={split}
           shareData={shareData}
           onClose={() => setShareModalOpen(false)}
-        />
-      )}
-      {qrTarget && (
-        <QrModal
-          transaction={qrTarget}
-          bill={bill}
-          onClose={() => setQrTarget(null)}
         />
       )}
     </div>
@@ -1150,7 +1139,7 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                 <button className="btn-auto" onClick={autoAssignAll}>
                   <Zap size={14} /> Split equally
                 </button>
-                {people.length >= 2 && (
+                {/* {people.length >= 2 && (
                   <button
                     className="btn-auto btn-smart"
                     onClick={handleSmartSplit}
@@ -1160,7 +1149,7 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                     <Wand2 size={14} />
                     {smartState?.loading ? "Thinking…" : "Smart assign"}
                   </button>
-                )}
+                )} */}
                 <button
                   className="btn-auto ghost-sm"
                   onClick={clearAllAssignees}
@@ -1346,7 +1335,7 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
   );
 }
 
-function SettleView({ split, bill, people, onShareOpen, onQrOpen }) {
+function SettleView({ split, bill, people, onShareOpen }) {
   // mode: "single" | "own" | "custom"
   const [mode, setMode] = useState(null); // null = nothing picked yet
   const [singleId, setSingleId] = useState(null);
@@ -1750,14 +1739,14 @@ function SettleView({ split, bill, people, onShareOpen, onQrOpen }) {
                 </div>
               </div>
               <div className="txn-actions">
-                <button
+                {/* <button
                   className="icon-btn"
                   onClick={() => onQrOpen(tx)}
                   title="Payment QR"
                   aria-label="Payment QR"
                 >
                   <QrCode size={14} />
-                </button>
+                </button> */}
                 <button
                   className={`txn-settle-btn${done ? " done" : ""}`}
                   onClick={() => toggleSettled(key)}
@@ -2048,64 +2037,64 @@ function ShareMessageModal({ bill, people, split, onClose, shareData }) {
 
 /* ─────────────────── QrModal ─────────────────── */
 
-function QrModal({ transaction, bill, onClose }) {
-  const [qrUrl, setQrUrl] = useState("");
+// function QrModal({ transaction, bill, onClose }) {
+//   const [qrUrl, setQrUrl] = useState("");
 
-  useEffect(() => {
-    const text = [
-      `Pay: ${bill.currency} ${Number(transaction.amount).toFixed(2)}`,
-      `From: ${transaction.from.name}`,
-      `To: ${transaction.to.name}`,
-      bill.merchant ? `For: ${bill.merchant}` : "",
-      bill.date ? `Date: ${bill.date}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    QRCode.toDataURL(text, { width: 220, margin: 2 })
-      .then(setQrUrl)
-      .catch(() => {});
-  }, []);
+//   useEffect(() => {
+//     const text = [
+//       `Pay: ${bill.currency} ${Number(transaction.amount).toFixed(2)}`,
+//       `From: ${transaction.from.name}`,
+//       `To: ${transaction.to.name}`,
+//       bill.merchant ? `For: ${bill.merchant}` : "",
+//       bill.date ? `Date: ${bill.date}` : "",
+//     ]
+//       .filter(Boolean)
+//       .join("\n");
+//     QRCode.toDataURL(text, { width: 220, margin: 2 })
+//       .then(setQrUrl)
+//       .catch(() => {});
+//   }, []);
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal qr-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <div className="modal-title">
-            <QrCode size={16} />
-            <span>Payment QR</span>
-          </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            <X size={15} />
-          </button>
-        </div>
-        <div className="qr-body">
-          <div className="qr-from-to">
-            <Avatar name={transaction.from.name} />
-            <div className="qr-from-to-text">
-              <strong>{transaction.from.name}</strong>
-              <span>pays</span>
-              <strong>{transaction.to.name}</strong>
-            </div>
-            <Avatar name={transaction.to.name} />
-          </div>
-          <div className="qr-amount-display">
-            {formatMoney(transaction.amount, bill.currency)}
-          </div>
-          {qrUrl ? (
-            <img src={qrUrl} alt="Payment QR code" className="qr-image" />
-          ) : (
-            <div className="qr-placeholder">
-              <Sparkles size={20} className="spin" />
-            </div>
-          )}
-          <small className="qr-hint">
-            Scan or screenshot to share payment details
-          </small>
-        </div>
-      </div>
-    </div>
-  );
-}
+//   return (
+//     <div className="modal-overlay" onClick={onClose}>
+//       <div className="modal qr-modal" onClick={(e) => e.stopPropagation()}>
+//         <div className="modal-header">
+//           <div className="modal-title">
+//             <QrCode size={16} />
+//             <span>Payment QR</span>
+//           </div>
+//           <button className="icon-btn" onClick={onClose} aria-label="Close">
+//             <X size={15} />
+//           </button>
+//         </div>
+//         <div className="qr-body">
+//           <div className="qr-from-to">
+//             <Avatar name={transaction.from.name} />
+//             <div className="qr-from-to-text">
+//               <strong>{transaction.from.name}</strong>
+//               <span>pays</span>
+//               <strong>{transaction.to.name}</strong>
+//             </div>
+//             <Avatar name={transaction.to.name} />
+//           </div>
+//           <div className="qr-amount-display">
+//             {formatMoney(transaction.amount, bill.currency)}
+//           </div>
+//           {qrUrl ? (
+//             <img src={qrUrl} alt="Payment QR code" className="qr-image" />
+//           ) : (
+//             <div className="qr-placeholder">
+//               <Sparkles size={20} className="spin" />
+//             </div>
+//           )}
+//           <small className="qr-hint">
+//             Scan or screenshot to share payment details
+//           </small>
+//         </div>
+//       </div>
+//     </div>
+//   );
+// }
 
 /* ─────────────────── SmartSplitModal ─────────────────── */
 
