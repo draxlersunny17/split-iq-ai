@@ -3754,19 +3754,6 @@ html.dark .insight-card {
   animation: fadeIn 0.15s ease both;
 }
 
-.modal-overlay-assign {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(4px);
-  z-index: 900;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 16px;
-  animation: fadeIn 0.15s ease both;
-}
-
 @keyframes fadeIn {
   from {
     opacity: 0;
