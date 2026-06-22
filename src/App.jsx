@@ -2153,7 +2153,7 @@ function SmartSplitModal({ suggestions, bill, people, onApply, onClose }) {
   const assignedCount = suggestions.length;
 
   return (
-    <div className="modal-overlay-assign" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose}>
       <div className="modal smart-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">
