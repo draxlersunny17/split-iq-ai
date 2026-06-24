@@ -668,7 +668,7 @@ button.ghost:hover {
 
 .hero-copy,
 .hero-stats,
-.hero-panel>button {
+.hero-panel > button {
   position: relative;
   z-index: 1;
 }
@@ -737,7 +737,7 @@ button.ghost:hover {
   flex-shrink: 0;
 }
 
-.hero-panel>button {
+.hero-panel > button {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.16);
   backdrop-filter: blur(8px);
@@ -751,7 +751,7 @@ button.ghost:hover {
   align-self: flex-start;
 }
 
-.hero-panel>button:hover {
+.hero-panel > button:hover {
   background: rgba(255, 255, 255, 0.18);
   box-shadow: none;
   transform: translateY(-1px);
@@ -905,7 +905,7 @@ button.ghost:hover {
   letter-spacing: -0.2px;
 }
 
-.section-head>span {
+.section-head > span {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-tertiary);
@@ -1328,7 +1328,7 @@ button.ghost:hover {
   gap: 5px;
 }
 
-.field>span {
+.field > span {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -1578,6 +1578,36 @@ html.dark .inline-form input {
   min-height: 32px;
 }
 
+.person-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.person-inputs input {
+  min-width: 0;
+  width: 100%;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  min-height: 28px;
+}
+
+.person-upi-input {
+  font-size: 11px !important;
+  color: var(--text-tertiary) !important;
+}
+
+.qr-upi-id {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0;
+  word-break: break-all;
+}
+
 /* ══ AVATAR ════════════════════════════════════════════════ */
 .avatar {
   width: 30px;
@@ -1759,7 +1789,7 @@ small {
     padding: 24px 20px;
   }
 
-  .hero-panel>button {
+  .hero-panel > button {
     width: 100%;
     justify-content: center;
     align-self: stretch;
@@ -3237,7 +3267,6 @@ html.dark .settle-select {
 }
 
 @media (max-width: 640px) {
-
   /* ── Settle header card ── */
   .settle-header-card {
     flex-direction: column;
@@ -3665,7 +3694,7 @@ html.dark .insight-card {
   flex-shrink: 0;
 }
 
-.merge-card-head>div strong {
+.merge-card-head > div strong {
   display: block;
   font-size: 14px;
   font-weight: 700;
@@ -3673,7 +3702,7 @@ html.dark .insight-card {
   margin-bottom: 3px;
 }
 
-.merge-card-head>div p {
+.merge-card-head > div p {
   margin: 0;
   font-size: 13px;
   color: var(--text-secondary);
