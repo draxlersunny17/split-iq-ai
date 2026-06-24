@@ -49,8 +49,8 @@ const appSlice = createSlice({
       mode: null,
       singleId: null,
       customAmounts: {},
-      settled: {}
-    }
+      settled: {},
+    },
   },
   reducers: {
     setView(state, action) {
@@ -106,15 +106,21 @@ const appSlice = createSlice({
       });
     },
     addPerson(state, action) {
-      const name = action.payload.trim();
+      const payload = action.payload;
+      const name = (
+        typeof payload === "string" ? payload : payload.name || ""
+      )?.trim();
+      const upiId = (
+        typeof payload === "string" ? "" : payload.upiId || ""
+      )?.trim();
       if (name) {
-        state.people.push({ id: crypto.randomUUID(), name });
+        state.people.push({ id: crypto.randomUUID(), name, upiId });
       }
     },
     updatePerson(state, action) {
-      const { id, name } = action.payload;
+      const { id, ...fields } = action.payload;
       state.people = state.people.map((person) =>
-        person.id === id ? { ...person, name } : person,
+        person.id === id ? { ...person, ...fields } : person,
       );
     },
     removePerson(state, action) {
@@ -135,8 +141,8 @@ const appSlice = createSlice({
         mode: null,
         singleId: null,
         customAmounts: {},
-        settled: {}
-      }
+        settled: {},
+      };
     },
     setInsight(state, action) {
       state.insight = action.payload;
@@ -145,7 +151,12 @@ const appSlice = createSlice({
       state.insightLoading = action.payload;
     },
     setSettleMode(state, action) {
-      state.settle = {mode: action.payload, singleId: null, customAmounts: {}, settled: {}};
+      state.settle = {
+        mode: action.payload,
+        singleId: null,
+        customAmounts: {},
+        settled: {},
+      };
     },
     setSettleSingleId(state, action) {
       state.settle.singleId = action.payload;
@@ -160,7 +171,7 @@ const appSlice = createSlice({
     toggleSettleTransaction(state, action) {
       const key = action.payload;
       state.settle.settled[key] = !state.settle.settled[key];
-    }
+    },
   },
 });
 
