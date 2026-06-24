@@ -1336,11 +1336,10 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
 }
 
 function SettleView({ split, bill, people, onShareOpen }) {
-  // mode: "single" | "own" | "custom"
-  const [mode, setMode] = useState(null); // null = nothing picked yet
-  const [singleId, setSingleId] = useState(null);
-  const [customAmounts, setCustomAmounts] = useState({}); // personId → number
-  const [settled, setSettled] = useState({});
+  const dispatch = useDispatch();
+  const { mode, singleId, customAmounts, settled } = useSelector(
+    (s) => s.splitwiser.settle,
+  );
 
   const grandTotal = split.reduce((s, p) => s + p.total, 0);
 
@@ -1369,36 +1368,49 @@ function SettleView({ split, bill, people, onShareOpen }) {
   const settledCount = Object.values(settled).filter(Boolean).length;
 
   function switchMode(next) {
-    setMode(next);
-    setSingleId(null);
-    setCustomAmounts({});
-    setSettled({});
+    dispatch(splitwiserActions.setSettleMode(next));
   }
 
   function setPersonPaid(id, raw) {
-    setCustomAmounts((prev) => ({ ...prev, [id]: normalizeNumber(raw) }));
+    dispatch(
+      splitwiserActions.setSettleCustomAmount({
+        id,
+        value: normalizeNumber(raw),
+      }),
+    );
   }
 
   function fillExactShare(id) {
     const share = split.find((p) => p.id === id)?.total ?? 0;
-    setCustomAmounts((prev) => ({ ...prev, [id]: Number(share.toFixed(2)) }));
+    dispatch(
+      splitwiserActions.setSettleCustomAmount({
+        id,
+        value: Number(share.toFixed(2)),
+      }),
+    );
   }
 
   function fillAllExact() {
-    setCustomAmounts(
-      Object.fromEntries(split.map((p) => [p.id, Number(p.total.toFixed(2))])),
+    dispatch(
+      splitwiserActions.setSettleCustomAmounts(
+        Object.fromEntries(
+          split.map((p) => [p.id, Number(p.total.toFixed(2))]),
+        ),
+      ),
     );
   }
 
   function fillAllEqual() {
     const each = people.length ? grandTotal / people.length : 0;
-    setCustomAmounts(
-      Object.fromEntries(people.map((p) => [p.id, Number(each.toFixed(2))])),
+    dispatch(
+      splitwiserActions.setSettleCustomAmounts(
+        Object.fromEntries(people.map((p) => [p.id, Number(each.toFixed(2))])),
+      ),
     );
   }
 
   function toggleSettled(key) {
-    setSettled((prev) => ({ ...prev, [key]: !prev[key] }));
+    dispatch(splitwiserActions.toggleSettleTransaction(key));
   }
 
   const SCENARIOS = [
@@ -1502,7 +1514,11 @@ function SettleView({ split, bill, people, onShareOpen }) {
                 key={p.id}
                 className={`payer-person-btn${singleId === p.id ? " selected" : ""}`}
                 onClick={() =>
-                  setSingleId((prev) => (prev === p.id ? null : p.id))
+                  dispatch(
+                    splitwiserActions.setSettleSingleId(
+                      singleId === p.id ? null : p.id,
+                    ),
+                  )
                 }
               >
                 <Avatar name={p.name} />
@@ -1647,10 +1663,12 @@ function SettleView({ split, bill, people, onShareOpen }) {
                       <button
                         className={`prv2-chip${chipAll ? " active" : ""}`}
                         onClick={() =>
-                          setCustomAmounts((prev) => ({
-                            ...prev,
-                            [p.id]: Number(grandTotal.toFixed(2)),
-                          }))
+                          dispatch(
+                            splitwiserActions.setSettleCustomAmount({
+                              id: p.id,
+                              value: Number(grandTotal.toFixed(2)),
+                            }),
+                          )
                         }
                       >
                         {formatMoney(grandTotal, bill.currency)} (full bill)

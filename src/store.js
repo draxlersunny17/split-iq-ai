@@ -45,6 +45,12 @@ const appSlice = createSlice({
       kind: "idle",
       message: "",
     },
+    settle: {
+      mode: null,
+      singleId: null,
+      customAmounts: {},
+      settled: {}
+    }
   },
   reducers: {
     setView(state, action) {
@@ -125,6 +131,12 @@ const appSlice = createSlice({
       state.insight = null;
       state.insightLoading = false;
       state.status = { kind: "idle", message: "" };
+      state.settle = {
+        mode: null,
+        singleId: null,
+        customAmounts: {},
+        settled: {}
+      }
     },
     setInsight(state, action) {
       state.insight = action.payload;
@@ -132,6 +144,23 @@ const appSlice = createSlice({
     setInsightLoading(state, action) {
       state.insightLoading = action.payload;
     },
+    setSettleMode(state, action) {
+      state.settle = {mode: action.payload, singleId: null, customAmounts: {}, settled: {}};
+    },
+    setSettleSingleId(state, action) {
+      state.settle.singleId = action.payload;
+    },
+    setSettleCustomAmount(state, action) {
+      const { id, value } = action.payload;
+      state.settle.customAmounts[id] = value;
+    },
+    setSettleCustomAmounts(state, action) {
+      state.settle.customAmounts = action.payload;
+    },
+    toggleSettleTransaction(state, action) {
+      const key = action.payload;
+      state.settle.settled[key] = !state.settle.settled[key];
+    }
   },
 });
 
