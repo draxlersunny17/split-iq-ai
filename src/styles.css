@@ -1756,6 +1756,16 @@ small {
 
   .section-head .inline-form {
     width: 100%;
+    flex-direction: column;
+  }
+
+  .section-head .inline-form input {
+    width: 100%;
+  }
+
+  .section-head .inline-form button[type="submit"] {
+    width: 100%;
+    justify-content: center;
   }
 
   .topbar {
@@ -3926,6 +3936,38 @@ html.dark .insight-card {
    ══════════════════════════════════════════════════════════ */
 .qr-modal {
   max-width: 360px;
+}
+
+.no-upi-modal {
+  max-width: 360px;
+}
+
+.no-upi-body {
+  padding: 8px 4px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.no-upi-body p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.no-upi-hint {
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+}
+
+.no-upi-hint code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: monospace;
 }
 
 .qr-body {
