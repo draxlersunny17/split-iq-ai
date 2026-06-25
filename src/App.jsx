@@ -1163,6 +1163,7 @@ function SettleView({ split, bill, people, onShareOpen }) {
   const dispatch = useDispatch();
   const { mode, singleId, customAmounts, settled } = useSelector((s) => s.splitwiser.settle);
   const [qrTransaction, setQrTransaction] = useState(null);
+  const [noUpiName, setNoUpiName] = useState(null);
 
   const grandTotal = split.reduce((s, p) => s + p.total, 0);
 
@@ -1541,8 +1542,9 @@ function SettleView({ split, bill, people, onShareOpen }) {
                   const upiId = recipient?.upiId;
                   const gpayLink = upiId ? buildGpayLink(upiId, tx.to.name, tx.amount, bill.currency) : null;
                   const upiLink = upiId ? buildUpiLink(upiId, tx.to.name, tx.amount, bill.currency) : null;
-                  const handlePayNow =
-                    isMobile && gpayLink
+                  const handlePayNow = !upiId
+                    ? () => setNoUpiName(tx.to.name)
+                    : isMobile && gpayLink
                       ? () => openUpiWithGpayFallback(gpayLink, upiLink)
                       : () => setQrTransaction(tx);
                   return (
@@ -1566,6 +1568,30 @@ function SettleView({ split, bill, people, onShareOpen }) {
         })}
       {qrTransaction && (
         <UpiQrModal transaction={qrTransaction} bill={bill} people={people} onClose={() => setQrTransaction(null)} />
+      )}
+      {noUpiName && (
+        <div className="modal-overlay" onClick={() => setNoUpiName(null)}>
+          <div className="modal no-upi-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">
+                <QrCode size={16} />
+                <span>No UPI ID</span>
+              </div>
+              <button className="icon-btn" onClick={() => setNoUpiName(null)} aria-label="Close">
+                <X size={15} />
+              </button>
+            </div>
+            <div className="no-upi-body">
+              <p>
+                <strong>{noUpiName}</strong> doesn't have a UPI ID saved yet.
+              </p>
+              <p className="no-upi-hint">
+                Go to the <strong>People</strong> tab and add their UPI ID (e.g. <code>name@okaxis</code>) to enable
+                direct payment.
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
