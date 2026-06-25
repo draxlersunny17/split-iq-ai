@@ -3226,6 +3226,33 @@ html.dark .settle-select {
   color: var(--text-primary);
 }
 
+.txn-pay-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--brand-light);
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  border-radius: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: none;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.txn-pay-btn:hover {
+  background: var(--brand);
+  color: #fff;
+  box-shadow: none;
+  transform: none;
+}
+
 .txn-settle-btn {
   min-height: 34px;
   padding: 0 14px;
@@ -3347,8 +3374,13 @@ html.dark .settle-select {
     font-size: 13px;
   }
 
-  .txn-settle-btn {
+  .txn-actions {
     width: 100%;
+  }
+
+  .txn-pay-btn,
+  .txn-settle-btn {
+    flex: 1;
     min-height: 40px;
     font-size: 13px;
     justify-content: center;
@@ -4190,6 +4222,7 @@ html.dark .insight-card {
     width: 100%;
   }
 
+  .txn-pay-btn,
   .txn-settle-btn {
     flex: 1;
   }
