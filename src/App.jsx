@@ -13,18 +13,22 @@ import {
   FileSpreadsheet,
   Globe,
   Home,
+  LogIn,
+  LogOut,
   MessageCircle,
   Moon,
   Plus,
   QrCode,
   ReceiptText,
   RotateCcw,
+  Search,
   ShieldCheck,
   Sparkles,
   Split,
   Sun,
   Trash2,
   Upload,
+  UserPlus,
   Users,
   Wallet,
   Wand2,
@@ -32,9 +36,22 @@ import {
   Zap,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import * as XLSX from "xlsx";
+import {
+  createSession,
+  deleteSession,
+  loadSession,
+  saveFullExpense,
+  searchUsers,
+  signIn,
+  signUp,
+  syncSessionItems,
+  syncSessionPeople,
+  syncSettleState,
+  updateGroupDescription,
+} from "./service/supabaseApi";
 import { emptyBill, splitwiserActions } from "./store";
 /* ─────────────────── utils ─────────────────── */
 
@@ -66,7 +83,7 @@ function formatMoney(value, currency = "INR") {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: currency || "INR",
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 0,
   }).format(normalizeNumber(value));
 }
 
@@ -199,7 +216,11 @@ function sanitizeParsedBill(parsed) {
 function calculateSplit(bill, people) {
   const personTotals = Object.fromEntries(people.map((p) => [p.id, 0]));
   const subtotal = bill.items.reduce((sum, item) => sum + normalizeNumber(item.price), 0);
-  const extras = normalizeNumber(bill.tax) + normalizeNumber(bill.serviceCharge) - normalizeNumber(bill.discount);
+  // Prefer explicit tax/service/discount fields when available (stored in notes, always accurate).
+  // Fall back to deriving extras from bill.total (handles cases where notes fields are zero).
+  const extrasFromFields =
+    normalizeNumber(bill.tax) + normalizeNumber(bill.serviceCharge) - normalizeNumber(bill.discount);
+  const extras = extrasFromFields !== 0 ? extrasFromFields : Math.max(0, normalizeNumber(bill.total) - subtotal);
   bill.items.forEach((item) => {
     const assignees = item.assignedTo?.length ? item.assignedTo : people.map((p) => p.id);
     const baseShare = splitAmount(item.price, assignees);
@@ -211,7 +232,7 @@ function calculateSplit(bill, people) {
   });
   return people.map((p) => ({
     ...p,
-    total: personTotals[p.id] || 0,
+    total: Math.round((personTotals[p.id] || 0) * 100) / 100,
     items: bill.items.filter((item) => !item.assignedTo?.length || item.assignedTo.includes(p.id)),
   }));
 }
@@ -329,12 +350,137 @@ async function generateShareMessage({ bill, people, split, transactions, payment
 
 function App() {
   const dispatch = useDispatch();
-  const { view, people, bill, status, insightLoading, insight } = useSelector((state) => state.splitwiser);
+  const { view, people, bill, status, insightLoading, insight, currentUser, activeSession } = useSelector(
+    (state) => state.splitwiser,
+  );
+  const settle = useSelector((state) => state.splitwiser.settle);
   const split = useMemo(() => calculateSplit(bill, people), [bill, people]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [animKey, setAnimKey] = useState(view);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareData, setShareData] = useState(null);
+  const [sessionLoading, setSessionLoading] = useState(() => !!activeSession?.expenseId);
+
+  // ── Refs for DB sync
+  const syncTimerRef = useRef(null);
+  const settledTimerRef = useRef(null);
+  const sessionRestoredRef = useRef(false);
+  const sessionLoadStartedRef = useRef(false); // prevents StrictMode double-invoke
+  const isRestoringRef = useRef(false); // suppresses syncs during restore
+
+  // ── Restore session from DB on mount (after login)
+  useEffect(() => {
+    if (!currentUser || !activeSession?.expenseId) {
+      sessionRestoredRef.current = true;
+      setSessionLoading(false);
+      return;
+    }
+    if (sessionLoadStartedRef.current) return; // StrictMode guard
+    sessionLoadStartedRef.current = true;
+    isRestoringRef.current = true;
+    loadSession(activeSession.expenseId)
+      .then(({ bill: b, people: ps, settle: s, description }) => {
+        if (b.items.length > 0 || ps.length > 0) {
+          dispatch(splitwiserActions.setBill(b));
+          ps.forEach((p) => dispatch(splitwiserActions.addPerson(p)));
+          // Restore settle scenario if it was saved
+          if (s?.mode) {
+            // Merge DB-restored settled (source of truth) with localStorage
+            // (localStorage may have more recent ticks not yet written to DB)
+            let localSettled = {};
+            try {
+              const raw = localStorage.getItem(`settled-${activeSession.expenseId}`);
+              if (raw) localSettled = JSON.parse(raw);
+            } catch {}
+            const mergedSettled = { ...(s.settled || {}), ...localSettled };
+            dispatch(splitwiserActions.restoreSettle({ ...s, settled: mergedSettled }));
+          }
+          // Restore AI insight from stored description — no API call needed
+          if (description) {
+            const [summary, cuisine, vibe] = description.split(" · ");
+            dispatch(
+              splitwiserActions.setInsight({
+                summary: summary || description,
+                cuisine: cuisine || "",
+                vibe: vibe || "",
+              }),
+            );
+          }
+        }
+      })
+      .catch(() => {
+        dispatch(splitwiserActions.setActiveSession({ expenseId: null, groupId: null }));
+      })
+      .finally(() => {
+        // Use setTimeout so React flushes all dispatched state updates before
+        // we allow sync effects to fire — prevents immediately overwriting
+        // the restored settle/bill state with stale values.
+        setTimeout(() => {
+          isRestoringRef.current = false;
+          sessionRestoredRef.current = true;
+          setSessionLoading(false);
+        }, 0);
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Sync people into group_members whenever the list changes
+  const supabaseIdsKey = people
+    .map((p) => p.supabaseId)
+    .filter(Boolean)
+    .join(",");
+  useEffect(() => {
+    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.groupId || !supabaseIdsKey) return;
+    const userIds = supabaseIdsKey.split(",");
+    syncSessionPeople(activeSession.groupId, userIds).catch(() => {});
+  }, [supabaseIdsKey, activeSession?.groupId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep a ref to latest settle so bill-sync can read it without depending on it
+  const settleRef = useRef(settle);
+  useEffect(() => {
+    settleRef.current = settle;
+  });
+
+  // ── Save AI insight summary as expense_group description when it arrives
+  useEffect(() => {
+    if (!insight?.summary || !activeSession?.groupId) return;
+    const description = [insight.summary, insight.cuisine, insight.vibe].filter(Boolean).join(" · ");
+    updateGroupDescription(activeSession.groupId, description).catch(() => {});
+  }, [insight, activeSession?.groupId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Debounced bill / item-assignment sync (2 s after last change)
+  useEffect(() => {
+    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.expenseId || !bill.items.length)
+      return;
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      syncSessionItems(activeSession.expenseId, bill, people, settleRef.current).catch(() => {});
+    }, 2000);
+    return () => clearTimeout(syncTimerRef.current);
+  }, [bill, activeSession?.expenseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist settled map to localStorage so it survives page refresh
+  const { settled } = settle;
+  useEffect(() => {
+    if (!activeSession?.expenseId) return;
+    try {
+      if (Object.keys(settled).length > 0) {
+        localStorage.setItem(`settled-${activeSession.expenseId}`, JSON.stringify(settled));
+      } else {
+        localStorage.removeItem(`settled-${activeSession.expenseId}`);
+      }
+    } catch {}
+  }, [settled, activeSession?.expenseId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Debounced settled-state sync to DB (1 s after marking a transaction)
+  useEffect(() => {
+    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.expenseId || !bill.items.length)
+      return;
+    clearTimeout(settledTimerRef.current);
+    settledTimerRef.current = setTimeout(() => {
+      syncSettleState(activeSession.expenseId, settle, people, bill).catch(() => {});
+    }, 1000);
+    return () => clearTimeout(settledTimerRef.current);
+  }, [settled, activeSession?.expenseId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [dark, setDark] = useState(() => {
     try {
@@ -351,6 +497,30 @@ function App() {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  // Compute allSettled early so the redirect effect and nav can use it
+  const { mode: settleMode, singleId: settleSingleId, customAmounts: settleCustom, settled: settledMap } = settle;
+  const appGrandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
+  const appPaymentAmounts =
+    settleMode === "single"
+      ? settleSingleId
+        ? { [settleSingleId]: appGrandTotal }
+        : {}
+      : settleMode === "own"
+        ? Object.fromEntries(split.map((p) => [p.id, p.total]))
+        : settleMode === "custom"
+          ? settleCustom
+          : {};
+  const appTxns = simplifyDebts(split, appPaymentAmounts);
+  const allSettledApp = appTxns.length > 0 && Object.values(settledMap).filter(Boolean).length === appTxns.length;
+  const hasBillItems = bill.items.length > 0;
+
+  // Redirect away from People tab if it becomes hidden
+  useEffect(() => {
+    if (view === "people" && (allSettledApp || !hasBillItems)) {
+      dispatch(splitwiserActions.setView("dashboard"));
+    }
+  }, [allSettledApp, hasBillItems, view]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function toggleTheme() {
     setDark((prev) => {
       const next = !prev;
@@ -359,6 +529,20 @@ function App() {
       } catch {}
       return next;
     });
+  }
+
+  function handleSignOut() {
+    dispatch(splitwiserActions.setCurrentUser(null));
+    dispatch(splitwiserActions.resetCurrentSplit());
+  }
+
+  function handleReset() {
+    dispatch(splitwiserActions.resetCurrentSplit());
+  }
+
+  // Show auth page if not logged in
+  if (!currentUser) {
+    return <AuthPage onAuth={(user) => dispatch(splitwiserActions.setCurrentUser(user))} />;
   }
 
   function setView(nextView) {
@@ -390,6 +574,21 @@ function App() {
         .then((insight) => dispatch(splitwiserActions.setInsight(insight)))
         .catch(() => {})
         .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
+      // Create new DB session (replace existing)
+      if (activeSession?.groupId) deleteSession(activeSession.groupId).catch(() => {});
+      createSession({
+        title: parsed.merchant || "Split session",
+        createdBy: currentUser.id,
+        date: parsed.date,
+        notes: JSON.stringify({
+          currency: parsed.currency || "INR",
+          tax: parsed.tax || 0,
+          serviceCharge: parsed.serviceCharge || 0,
+          discount: parsed.discount || 0,
+        }),
+      })
+        .then((session) => dispatch(splitwiserActions.setActiveSession(session)))
+        .catch(() => {});
     } catch (error) {
       dispatch(splitwiserActions.setStatus({ kind: "error", message: error.message }));
     }
@@ -434,6 +633,21 @@ function App() {
         .then((insight) => dispatch(splitwiserActions.setInsight(insight)))
         .catch(() => {})
         .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
+      // Create new DB session (replace existing)
+      if (activeSession?.groupId) deleteSession(activeSession.groupId).catch(() => {});
+      createSession({
+        title: merged.merchant || "Split session",
+        createdBy: currentUser.id,
+        date: merged.date,
+        notes: JSON.stringify({
+          currency: merged.currency || "INR",
+          tax: merged.tax || 0,
+          serviceCharge: merged.serviceCharge || 0,
+          discount: merged.discount || 0,
+        }),
+      })
+        .then((session) => dispatch(splitwiserActions.setActiveSession(session)))
+        .catch(() => {});
     } catch (error) {
       dispatch(splitwiserActions.setStatus({ kind: "error", message: error.message }));
     }
@@ -476,7 +690,7 @@ function App() {
     ["upload", Upload, "Upload"],
     ["split", Split, "Split"],
     ["settle", Wallet, "Settle"],
-    ["people", Users, "People"],
+    ...(!allSettledApp && hasBillItems ? [["people", Users, "People"]] : []),
   ];
 
   const isLoading = status.kind === "loading";
@@ -533,12 +747,13 @@ function App() {
             <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
               {dark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <button className="ghost" onClick={() => dispatch(splitwiserActions.resetCurrentSplit())}>
-              <RotateCcw size={16} /> Reset
+            <button className="ghost" onClick={handleReset}>
+              <RotateCcw size={16} /> <span className="btn-label">Reset</span>
             </button>
             <button onClick={exportExcel}>
-              <FileSpreadsheet size={16} /> Export
+              <FileSpreadsheet size={16} /> <span className="btn-label">Export</span>
             </button>
+            <ProfileBubble user={currentUser} onSignOut={handleSignOut} />
           </div>
         </header>
 
@@ -550,30 +765,59 @@ function App() {
         )}
 
         <div key={animKey} className="view-animate">
-          {view === "dashboard" && <Dashboard bill={bill} people={people} split={split} setView={setView} />}
-          {view === "upload" && <UploadView onAnalyze={handleAnalyze} onMerge={handleMerge} loading={isLoading} />}
-          {view === "split" && (
-            <SplitView
+          {view === "dashboard" && (
+            <Dashboard
               bill={bill}
               people={people}
               split={split}
-              loading={isLoading}
-              insight={insight}
-              insightLoading={insightLoading}
+              setView={setView}
+              currentUser={currentUser}
+              loading={sessionLoading}
             />
           )}
+          {view === "upload" && <UploadView onAnalyze={handleAnalyze} onMerge={handleMerge} loading={isLoading} />}
+          {view === "split" &&
+            (() => {
+              const { mode, singleId, customAmounts, settled: settledMap } = settle;
+              const grandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
+              const paymentAmounts =
+                mode === "single"
+                  ? singleId
+                    ? { [singleId]: grandTotal }
+                    : {}
+                  : mode === "own"
+                    ? Object.fromEntries(split.map((p) => [p.id, p.total]))
+                    : mode === "custom"
+                      ? customAmounts
+                      : {};
+              const txns = simplifyDebts(split, paymentAmounts);
+              const allSettled = txns.length > 0 && Object.values(settledMap).filter(Boolean).length === txns.length;
+              return (
+                <SplitView
+                  bill={bill}
+                  people={people}
+                  split={split}
+                  loading={isLoading}
+                  insight={insight}
+                  insightLoading={insightLoading}
+                  locked={allSettled}
+                />
+              );
+            })()}
           {view === "settle" && (
             <SettleView
               split={split}
               bill={bill}
               people={people}
+              currentUser={currentUser}
+              loading={sessionLoading}
               onShareOpen={(data) => {
                 setShareData(data);
                 setShareModalOpen(true);
               }}
             />
           )}
-          {view === "people" && <PeopleView people={people} />}
+          {view === "people" && <PeopleView people={people} currentUser={currentUser} />}
         </div>
       </main>
 
@@ -603,19 +847,61 @@ function viewTitle(view) {
 
 /* ─────────────────── Dashboard ─────────────────── */
 
-function Dashboard({ bill, people, split, setView }) {
+function Dashboard({ bill, people, split, setView, currentUser, loading }) {
   const settled = split.filter((p) => p.total > 0);
   const hasBill = bill.items.length > 0;
+  const firstName = currentUser?.name?.split(" ")[0] || "";
+
+  if (loading) {
+    return (
+      <section className="dashboard-grid">
+        <div className="hero-panel">
+          <div className="hero-copy">
+            <div className="skel" style={{ height: 14, width: 120, marginBottom: 10 }} />
+            <div className="skel" style={{ height: 36, width: "70%", marginBottom: 8 }} />
+            <div className="skel" style={{ height: 14, width: "50%" }} />
+          </div>
+          <div className="hero-stats" style={{ width: "100%", overflow: "hidden" }}>
+            {["Bill total", "Items", "People", "Settling"].map((label) => (
+              <div key={label} className="hstat" style={{ flex: 1, minWidth: 0, padding: "12px 8px" }}>
+                <div className="skel" style={{ height: 22, width: "100%", maxWidth: 64, marginBottom: 6 }} />
+                <span className="hstat-label">{label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="skel" style={{ height: 44, width: 160, borderRadius: 10 }} />
+        </div>
+        <div className="panel wide">
+          <div className="section-head">
+            <h3>Split preview</h3>
+          </div>
+          <div className="settlement-list">
+            {[1, 2].map((i) => (
+              <div key={i} className="settlement-row">
+                <span className="name-cell">
+                  <div className="skel" style={{ width: 32, height: 32, borderRadius: "50%" }} />
+                  <div className="skel" style={{ height: 14, width: 120 }} />
+                </span>
+                <div className="skel" style={{ flex: 1, height: 8, margin: "0 12px" }} />
+                <div className="skel" style={{ height: 14, width: 80 }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="dashboard-grid">
       <div className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">Active session</p>
-          <h2>{bill.merchant || "Ready when you are"}</h2>
+          <p className="eyebrow">{firstName ? `Hi, ${firstName} 👋` : "Active session"}</p>
+          <h2>{bill.merchant || "Ready to split?"}</h2>
           <p>
             {hasBill
               ? "Review item assignments, adjust splits, and settle up."
-              : "Upload a receipt and AI will extract every line item instantly."}
+              : "Upload a receipt and AI will extract every line item in seconds."}
           </p>
         </div>
 
@@ -851,7 +1137,7 @@ function SkeletonBill() {
 
 /* ─────────────────── Split view ─────────────────── */
 
-function SplitView({ bill, people, split, loading, insight, insightLoading }) {
+function SplitView({ bill, people, split, loading, insight, insightLoading, locked = false }) {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState("details");
   const [smartState, setSmartState] = useState(null); // null | { loading } | { suggestions }
@@ -915,44 +1201,51 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
         <section className="panel tab-panel-details">
           <div className="section-head">
             <h3>Bill details</h3>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="icon-btn"
-                onClick={() => dispatch(splitwiserActions.addItem())}
-                aria-label="Add item"
-                title="Add item"
-              >
-                <Plus size={18} />
-              </button>
-            </div>
+            {!locked && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="icon-btn"
+                  onClick={() => dispatch(splitwiserActions.addItem())}
+                  aria-label="Add item"
+                  title="Add item"
+                >
+                  <Plus size={18} />
+                </button>
+              </div>
+            )}
           </div>
           <div className="form-grid">
             <Field
               label="Merchant"
               value={bill.merchant}
+              readOnly={locked}
               onChange={(v) => dispatch(splitwiserActions.updateBill({ merchant: v }))}
             />
             <Field
               label="Date"
               type="date"
               value={bill.date}
+              readOnly={locked}
               onChange={(v) => dispatch(splitwiserActions.updateBill({ date: v }))}
             />
             <Field
               label="Currency"
               value={bill.currency}
+              readOnly={locked}
               onChange={(v) => dispatch(splitwiserActions.updateBill({ currency: v.toUpperCase() }))}
             />
             <Field
               label="Tax"
               type="number"
               value={bill.tax}
+              readOnly={locked}
               onChange={(v) => dispatch(splitwiserActions.updateBill({ tax: normalizeNumber(v) }))}
             />
             <Field
               label="Service charge"
               type="number"
               value={bill.serviceCharge}
+              readOnly={locked}
               onChange={(v) =>
                 dispatch(
                   splitwiserActions.updateBill({
@@ -965,6 +1258,7 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
               label="Discount"
               type="number"
               value={bill.discount}
+              readOnly={locked}
               onChange={(v) =>
                 dispatch(
                   splitwiserActions.updateBill({
@@ -977,7 +1271,7 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
 
           <AnomalyAlerts bill={bill} />
 
-          {people.length > 0 && bill.items.length > 0 && (
+          {people.length > 0 && bill.items.length > 0 && !locked && (
             <div className="auto-assign-bar">
               <div className="auto-assign-info">
                 {unassignedCount > 0 ? (
@@ -1036,7 +1330,9 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                   <input
                     placeholder="Item name"
                     value={item.name}
+                    readOnly={locked}
                     onChange={(e) =>
+                      !locked &&
                       dispatch(
                         splitwiserActions.updateItem({
                           id: item.id,
@@ -1048,7 +1344,9 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                   <input
                     type="number"
                     value={item.quantity}
+                    readOnly={locked}
                     onChange={(e) =>
+                      !locked &&
                       dispatch(
                         splitwiserActions.updateItem({
                           id: item.id,
@@ -1060,7 +1358,9 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                   <input
                     type="number"
                     value={item.price}
+                    readOnly={locked}
                     onChange={(e) =>
+                      !locked &&
                       dispatch(
                         splitwiserActions.updateItem({
                           id: item.id,
@@ -1073,6 +1373,8 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                     className="icon-btn danger"
                     onClick={() => dispatch(splitwiserActions.removeItem(item.id))}
                     aria-label="Remove"
+                    style={locked ? { visibility: "hidden" } : undefined}
+                    disabled={locked}
                   >
                     <Trash2 size={14} />
                   </button>
@@ -1085,7 +1387,9 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
                       <input
                         type="checkbox"
                         checked={item.assignedTo.includes(person.id)}
+                        disabled={locked}
                         onChange={() =>
+                          !locked &&
                           dispatch(
                             splitwiserActions.toggleAssignee({
                               itemId: item.id,
@@ -1159,13 +1463,15 @@ function SplitView({ bill, people, split, loading, insight, insightLoading }) {
   );
 }
 
-function SettleView({ split, bill, people, onShareOpen }) {
+function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) {
   const dispatch = useDispatch();
   const { mode, singleId, customAmounts, settled } = useSelector((s) => s.splitwiser.settle);
+  const { activeSession } = useSelector((s) => s.splitwiser);
   const [qrTransaction, setQrTransaction] = useState(null);
   const [noUpiName, setNoUpiName] = useState(null);
+  const [saveState, setSaveState] = useState(null); // null | "saving" | { id } | { error }
 
-  const grandTotal = split.reduce((s, p) => s + p.total, 0);
+  const grandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
 
   const paymentAmounts = useMemo(() => {
     if (mode === "single") return singleId ? { [singleId]: grandTotal } : {};
@@ -1180,6 +1486,48 @@ function SettleView({ split, bill, people, onShareOpen }) {
   const hasEnteredAny = mode === "custom" && Object.values(customAmounts).some((v) => normalizeNumber(v) > 0);
   const hasPayments = mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
   const settledCount = Object.values(settled).filter(Boolean).length;
+
+  if (loading) {
+    return (
+      <div className="settle-view">
+        <div className="settle-hc">
+          <div className="settle-hc-left">
+            <div className="skel" style={{ height: 14, width: 160, marginBottom: 10 }} />
+            <div className="skel" style={{ height: 28, width: 220, marginBottom: 8 }} />
+            <div className="skel" style={{ height: 13, width: 180 }} />
+          </div>
+        </div>
+        <div className="scenario-cards">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="skel" style={{ height: 72, borderRadius: 12 }} />
+          ))}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+          {[1, 2].map((i) => (
+            <div key={i} className="skel" style={{ height: 64, borderRadius: 12 }} />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  async function handleSaveExpense() {
+    setSaveState("saving");
+    try {
+      const expense = await saveFullExpense({
+        bill,
+        people,
+        split,
+        paymentAmounts,
+        currentUser,
+        expenseId: activeSession?.expenseId,
+        groupId: activeSession?.groupId,
+      });
+      setSaveState({ id: expense.id });
+    } catch (e) {
+      setSaveState({ error: e.message || "Save failed" });
+    }
+  }
 
   function switchMode(next) {
     dispatch(splitwiserActions.setSettleMode(next));
@@ -1273,6 +1621,12 @@ function SettleView({ split, bill, people, onShareOpen }) {
     window.location.href = gpayLink;
   }
 
+  const allSettled = transactions.length > 0 && settledCount === transactions.length;
+  const settledAmount = transactions
+    .filter((tx) => !!settled[`${tx.from.id}-${tx.to.id}`])
+    .reduce((s, tx) => s + tx.amount, 0);
+  const remainingAmount = Math.max(0, grandTotal - settledAmount);
+
   return (
     <div className="settle-wrap">
       {/* ── Header summary ── */}
@@ -1283,35 +1637,80 @@ function SettleView({ split, bill, people, onShareOpen }) {
           </div>
           <div>
             <div className="settle-hc-label">Total to settle</div>
-            <div className="settle-hc-amount">{formatMoney(grandTotal, bill.currency)}</div>
+            <div className="settle-hc-amount">
+              {allSettled ? formatMoney(0, bill.currency) : formatMoney(remainingAmount, bill.currency)}
+            </div>
             <div className="settle-hc-sub">
-              {hasPayments
-                ? `${transactions.length} transfer${transactions.length !== 1 ? "s" : ""} needed · ${settledCount}/${transactions.length} done`
-                : "Pick a scenario below to get started"}
+              {allSettled
+                ? "Nothing to settle — all done!"
+                : hasPayments
+                  ? `${transactions.length} transfer${transactions.length !== 1 ? "s" : ""} needed · ${settledCount}/${transactions.length} done`
+                  : "Pick a scenario below to get started"}
             </div>
           </div>
         </div>
-        <div className="settle-hc-right">
-          <div className="settle-progress-wrap">
-            <div className="settle-progress-bar">
-              <div
-                className="settle-progress-fill"
-                style={{
-                  width: hasPayments && transactions.length ? `${(settledCount / transactions.length) * 100}%` : "0%",
-                }}
-              />
+        {!allSettled && (
+          <div className="settle-hc-right">
+            <div className="settle-progress-wrap">
+              <div className="settle-progress-bar">
+                <div
+                  className="settle-progress-fill"
+                  style={{
+                    width: hasPayments && transactions.length ? `${(settledCount / transactions.length) * 100}%` : "0%",
+                  }}
+                />
+              </div>
             </div>
+            <div className="settle-hc-actions">
+              {hasPayments && !(transactions.length > 0 && settledCount === transactions.length) && (
+                <button
+                  className={`ghost settle-save-btn${saveState?.id ? " saved" : ""}`}
+                  onClick={saveState?.error ? () => setSaveState(null) : handleSaveExpense}
+                  disabled={saveState === "saving" || !!saveState?.id}
+                  title={saveState?.error || undefined}
+                >
+                  {saveState === "saving" ? (
+                    <>
+                      <span className="mini-spinner" /> Saving…
+                    </>
+                  ) : saveState?.id ? (
+                    <>
+                      <CheckCircle2 size={14} /> Saved
+                    </>
+                  ) : saveState?.error ? (
+                    <>
+                      <AlertCircle size={14} /> Retry
+                    </>
+                  ) : (
+                    <>
+                      <Zap size={14} /> Save split
+                    </>
+                  )}
+                </button>
+              )}
+              {!allSettled && (
+                <button
+                  className="ghost settle-share-btn"
+                  onClick={() => onShareOpen({ transactions, paymentAmounts })}
+                >
+                  <MessageCircle size={15} /> Share
+                </button>
+              )}
+            </div>
+            {saveState?.error && <p className="settle-save-error">{saveState.error}</p>}
           </div>
-          <button className="ghost settle-share-btn" onClick={() => onShareOpen({ transactions, paymentAmounts })}>
-            <MessageCircle size={15} /> Share
-          </button>
-        </div>
+        )}
       </div>
 
       {/* ── Scenario cards ── */}
       <div className="scenario-grid">
         {SCENARIOS.map(({ id, icon: Icon, title, desc }) => (
-          <button key={id} className={`scenario-card${mode === id ? " active" : ""}`} onClick={() => switchMode(id)}>
+          <button
+            key={id}
+            className={`scenario-card${mode === id ? " active" : ""}${allSettled && mode !== id ? " disabled" : ""}`}
+            onClick={() => !allSettled && switchMode(id)}
+            disabled={allSettled && mode !== id}
+          >
             <div className="scenario-icon">
               <Icon size={18} />
             </div>
@@ -1335,20 +1734,26 @@ function SettleView({ split, bill, people, onShareOpen }) {
             {people.length === 0 && (
               <EmptyState icon={Users} title="No participants" message="Add people in the People tab first." compact />
             )}
-            {people.map((p) => (
-              <button
-                key={p.id}
-                className={`payer-person-btn${singleId === p.id ? " selected" : ""}`}
-                onClick={() => dispatch(splitwiserActions.setSettleSingleId(singleId === p.id ? null : p.id))}
-              >
-                <Avatar name={p.name} />
-                <div className="ppb-info">
-                  <span className="ppb-name">{p.name}</span>
-                  <span className="ppb-amount">{formatMoney(grandTotal, bill.currency)}</span>
-                </div>
-                {singleId === p.id && <Check size={14} className="ppb-check" />}
-              </button>
-            ))}
+            {people.map((p) => {
+              const allSettled = transactions.length > 0 && settledCount === transactions.length;
+              return (
+                <button
+                  key={p.id}
+                  className={`payer-person-btn${singleId === p.id ? " selected" : ""}${allSettled && singleId !== p.id ? " disabled" : ""}`}
+                  onClick={() =>
+                    !allSettled && dispatch(splitwiserActions.setSettleSingleId(singleId === p.id ? null : p.id))
+                  }
+                  disabled={allSettled && singleId !== p.id}
+                >
+                  <Avatar name={p.name} />
+                  <div className="ppb-info">
+                    <span className="ppb-name">{p.name}</span>
+                    <span className="ppb-amount">{formatMoney(grandTotal, bill.currency)}</span>
+                  </div>
+                  {singleId === p.id && <Check size={14} className="ppb-check" />}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1387,12 +1792,16 @@ function SettleView({ split, bill, people, onShareOpen }) {
               Leave at <strong>0</strong> if they paid nothing upfront.
             </p>
             <div className="multi-payer-presets">
-              <button className="preset-btn" onClick={fillAllExact}>
-                <Zap size={13} /> Everyone paid own share
-              </button>
-              <button className="preset-btn ghost" onClick={fillAllEqual}>
-                <RotateCcw size={13} /> Divide equally
-              </button>
+              {!allSettled && (
+                <>
+                  <button className="preset-btn" onClick={fillAllExact}>
+                    <Zap size={13} /> Everyone paid own share
+                  </button>
+                  <button className="preset-btn ghost" onClick={fillAllEqual}>
+                    <RotateCcw size={13} /> Divide equally
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1425,7 +1834,8 @@ function SettleView({ split, bill, people, onShareOpen }) {
                         value={customAmounts[p.id] ?? ""}
                         min="0"
                         step="0.01"
-                        onChange={(e) => setPersonPaid(p.id, e.target.value)}
+                        readOnly={allSettled}
+                        onChange={allSettled ? undefined : (e) => setPersonPaid(p.id, e.target.value)}
                       />
                     </div>
                     {diff !== null && (
@@ -1440,25 +1850,34 @@ function SettleView({ split, bill, people, onShareOpen }) {
                   </div>
                   {/* chip row: quick picks */}
                   <div className="prv2-chips">
-                    <button className={`prv2-chip${chipNone ? " active" : ""}`} onClick={() => setPersonPaid(p.id, 0)}>
+                    <button
+                      className={`prv2-chip${chipNone ? " active" : ""}`}
+                      disabled={allSettled}
+                      onClick={allSettled ? undefined : () => setPersonPaid(p.id, 0)}
+                    >
                       Paid nothing
                     </button>
                     <button
                       className={`prv2-chip accent${chipShare ? " active" : ""}`}
-                      onClick={() => fillExactShare(p.id)}
+                      disabled={allSettled}
+                      onClick={allSettled ? undefined : () => fillExactShare(p.id)}
                     >
                       {formatMoney(p.total, bill.currency)} (their share)
                     </button>
                     {grandTotal !== p.total && (
                       <button
                         className={`prv2-chip${chipAll ? " active" : ""}`}
-                        onClick={() =>
-                          dispatch(
-                            splitwiserActions.setSettleCustomAmount({
-                              id: p.id,
-                              value: Number(grandTotal.toFixed(2)),
-                            }),
-                          )
+                        disabled={allSettled}
+                        onClick={
+                          allSettled
+                            ? undefined
+                            : () =>
+                                dispatch(
+                                  splitwiserActions.setSettleCustomAmount({
+                                    id: p.id,
+                                    value: Number(grandTotal.toFixed(2)),
+                                  }),
+                                )
                         }
                       >
                         {formatMoney(grandTotal, bill.currency)} (full bill)
@@ -1498,7 +1917,7 @@ function SettleView({ split, bill, people, onShareOpen }) {
       )}
 
       {/* ── All settled ── */}
-      {hasPayments && transactions.length === 0 && (
+      {hasPayments && split.length > 0 && transactions.length === 0 && settledCount === 0 && (
         <div className="settle-all-done">
           <CheckCircle2 size={40} />
           <strong>All settled up!</strong>
@@ -1513,14 +1932,13 @@ function SettleView({ split, bill, people, onShareOpen }) {
         </div>
       )}
 
-      {/* ── Transaction cards ── */}
-      {transactions.length > 0 &&
-        settledCount < transactions.length &&
-        transactions.map((tx, i) => {
+      {/* ── Transaction cards — only unsettled ones ── */}
+      {transactions
+        .filter((tx) => !settled[`${tx.from.id}-${tx.to.id}`])
+        .map((tx, i) => {
           const key = `${tx.from.id}-${tx.to.id}`;
-          const done = !!settled[key];
           return (
-            <div key={key} className={`txn-card${done ? " txn-done" : ""}`} style={{ animationDelay: `${i * 60}ms` }}>
+            <div key={key} className="txn-card" style={{ animationDelay: `${i * 60}ms` }}>
               <div className="txn-avatars">
                 <Avatar name={tx.from.name} />
                 <div className="txn-arrow">
@@ -1553,14 +1971,8 @@ function SettleView({ split, bill, people, onShareOpen }) {
                     </button>
                   );
                 })()}
-                <button className={`txn-settle-btn${done ? " done" : ""}`} onClick={() => toggleSettled(key)}>
-                  {done ? (
-                    <>
-                      <CheckCircle2 size={14} /> Settled
-                    </>
-                  ) : (
-                    "Mark settled"
-                  )}
+                <button className="txn-settle-btn" onClick={() => toggleSettled(key)}>
+                  Mark settled
                 </button>
               </div>
             </div>
@@ -1599,72 +2011,108 @@ function SettleView({ split, bill, people, onShareOpen }) {
 
 /* ─────────────────── People ─────────────────── */
 
-function PeopleView({ people }) {
+function UserSearch({ onAdd, existingSupabaseIds }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const idsKey = existingSupabaseIds.join(",");
+
+  useEffect(() => {
+    if (query.length < 2) {
+      setResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const users = await searchUsers(query);
+        setResults(users.filter((u) => !existingSupabaseIds.includes(u.id)));
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query, idsKey]);
+
+  return (
+    <div className="user-search">
+      <div className="user-search-input-wrap">
+        <Search size={15} />
+        <input placeholder="Search people by name to add…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {searching && <span className="user-search-spinner" />}
+      </div>
+      {results.length > 0 && (
+        <div className="user-search-results">
+          {results.map((u) => (
+            <button
+              key={u.id}
+              className="user-search-result"
+              onClick={() => {
+                onAdd(u);
+                setQuery("");
+                setResults([]);
+              }}
+            >
+              <Avatar name={u.name} />
+              <div className="usr-info">
+                <span className="usr-name">{u.name}</span>
+                <span className="usr-phone">{u.phone_number}</span>
+              </div>
+              <Plus size={15} />
+            </button>
+          ))}
+        </div>
+      )}
+      {query.length >= 2 && !searching && results.length === 0 && (
+        <p className="user-search-empty">No users found for &ldquo;{query}&rdquo;</p>
+      )}
+    </div>
+  );
+}
+
+function PeopleView({ people, currentUser }) {
   const dispatch = useDispatch();
-  const [newName, setNewName] = useState("");
-  const [newUpiId, setNewUpiId] = useState("");
-  function addPerson(e) {
-    e.preventDefault();
-    if (!newName.trim()) return;
+
+  function handleAddUser(dbUser) {
+    if (people.some((p) => p.supabaseId === dbUser.id)) return;
     dispatch(
       splitwiserActions.addPerson({
-        name: newName.trim(),
-        upiId: newUpiId.trim(),
+        name: dbUser.name,
+        upiId: dbUser.upi_id || "",
+        supabaseId: dbUser.id,
       }),
     );
-    setNewName("");
-    setNewUpiId("");
   }
+
   return (
     <section className="panel">
       <div className="section-head">
         <h3>Participants</h3>
-        <form className="inline-form" onSubmit={addPerson}>
-          <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-          <input
-            placeholder="UPI ID (optional)"
-            value={newUpiId}
-            onChange={(e) => setNewUpiId(e.target.value)}
-            style={{ minWidth: 0 }}
-          />
-          <button type="submit">
-            <Plus size={16} /> Add
+        {currentUser && !people.some((p) => p.supabaseId === currentUser.id) && (
+          <button
+            className="ghost"
+            style={{ fontSize: 12, minHeight: 32, padding: "0 10px" }}
+            onClick={() => handleAddUser(currentUser)}
+          >
+            <Plus size={13} /> Add me
           </button>
-        </form>
+        )}
       </div>
+      <UserSearch onAdd={handleAddUser} existingSupabaseIds={people.map((p) => p.supabaseId).filter(Boolean)} />
       <div className="people-grid">
         {people.length === 0 && (
-          <EmptyState icon={Users} title="No people added" message="Add everyone who shared the bill." />
+          <EmptyState icon={Users} title="No people added" message="Search and add people who shared the bill." />
         )}
         {people.map((person) => (
           <div className="person-card" key={person.id}>
             <Avatar name={person.name} />
             <div className="person-inputs">
-              <input
-                value={person.name}
-                placeholder="Name"
-                onChange={(e) =>
-                  dispatch(
-                    splitwiserActions.updatePerson({
-                      id: person.id,
-                      name: e.target.value,
-                    }),
-                  )
-                }
-              />
-              <input
-                value={person.upiId || ""}
-                placeholder="UPI ID (e.g. name@upi)"
-                className="person-upi-input"
-                onChange={(e) =>
-                  dispatch(
-                    splitwiserActions.updatePerson({
-                      id: person.id,
-                      upiId: e.target.value,
-                    }),
-                  )
-                }
-              />
+              <span className="person-name-text">{person.name}</span>
+              {person.upiId && <span className="person-upi-text">{person.upiId}</span>}
             </div>
             <button
               className="icon-btn danger"
@@ -1682,16 +2130,16 @@ function PeopleView({ people }) {
 
 /* ─────────────────── Shared components ─────────────────── */
 
-function Field({ label, value, onChange, type = "text" }) {
+function Field({ label, value, onChange, type = "text", readOnly = false }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} />
+      <input type={type} value={value} readOnly={readOnly} onChange={(e) => !readOnly && onChange(e.target.value)} />
     </label>
   );
 }
 
-function Avatar({ name }) {
+function Avatar({ name, size }) {
   const initials =
     name
       .split(" ")
@@ -1699,7 +2147,11 @@ function Avatar({ name }) {
       .slice(0, 2)
       .map((p) => p[0]?.toUpperCase())
       .join("") || "?";
-  return <span className="avatar">{initials}</span>;
+  return (
+    <span className="avatar" style={size ? { width: size, height: size, fontSize: size * 0.38 } : undefined}>
+      {initials}
+    </span>
+  );
 }
 
 function EmptyState({ icon: Icon, title, message, compact = false }) {
@@ -2019,6 +2471,275 @@ function SmartSplitModal({ suggestions, bill, people, onApply, onClose }) {
             <Check size={15} /> Apply {assignedCount} assignments
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────── Profile Bubble ─────────────────── */
+
+function ProfileBubble({ user, onSignOut }) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(e) {
+      if (!e.target.closest(".profile-bubble")) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [open]);
+
+  return (
+    <div className="profile-bubble">
+      <button
+        className="profile-bubble-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Profile menu"
+        aria-expanded={open}
+      >
+        <Avatar name={user.name} />
+      </button>
+
+      {open && (
+        <div className="profile-bubble-dropdown">
+          <div className="profile-bubble-info">
+            <Avatar name={user.name} size={36} />
+            <div>
+              <p className="profile-bubble-name">{user.name}</p>
+              {user.phone_number && <p className="profile-bubble-phone">{user.phone_number}</p>}
+              {user.upi_id && <p className="profile-bubble-upi">{user.upi_id}</p>}
+            </div>
+          </div>
+          <div className="profile-bubble-divider" />
+          <button
+            className="profile-bubble-signout"
+            onClick={() => {
+              setOpen(false);
+              onSignOut();
+            }}
+          >
+            <LogOut size={15} /> Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────── Auth Page ─────────────────── */
+
+function AuthPage({ onAuth }) {
+  const [mode, setMode] = useState("signin"); // 'signin' | 'signup'
+  const [phone, setPhone] = useState("");
+  const [name, setName] = useState("");
+  const [upiId, setUpiId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  function switchMode(m) {
+    setMode(m);
+    setError("");
+    setPhone("");
+    setName("");
+    setUpiId("");
+  }
+
+  function handlePhoneChange(val) {
+    // Allow only digits, max 10
+    const digits = val.replace(/\D/g, "").slice(0, 10);
+    setPhone(digits);
+  }
+
+  function fullPhone() {
+    return phone.trim() ? `+91${phone.trim()}` : "";
+  }
+
+  async function handleSignIn(e) {
+    e.preventDefault();
+    if (phone.length !== 10) return setError("Enter a valid 10-digit phone number.");
+    setLoading(true);
+    setError("");
+    try {
+      const user = await signIn(fullPhone());
+      if (!user) {
+        setError("No account found with this number. Please sign up.");
+        setMode("signup");
+      } else {
+        onAuth(user);
+      }
+    } catch (err) {
+      setError(err.message || "Sign in failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSignUp(e) {
+    e.preventDefault();
+    if (!name.trim()) return setError("Name is required.");
+    if (phone.length !== 10) return setError("Enter a valid 10-digit phone number.");
+    setLoading(true);
+    setError("");
+    try {
+      const user = await signUp({ name: name.trim(), phone_number: fullPhone(), upi_id: upiId.trim() });
+      onAuth(user);
+    } catch (err) {
+      setError(err.message || "Sign up failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-card">
+        {/* Brand */}
+        <div className="auth-brand">
+          <div className="brand-mark">
+            <ReceiptText size={22} />
+          </div>
+          <div className="brand-text">
+            <strong>Split-IQ</strong>
+            <span>Bill splitting AI</span>
+          </div>
+        </div>
+
+        {/* Tab switcher */}
+        <div className="auth-tabs">
+          <button
+            type="button"
+            className={`auth-tab${mode === "signin" ? " active" : ""}`}
+            onClick={() => switchMode("signin")}
+          >
+            <LogIn size={15} /> Sign In
+          </button>
+          <button
+            type="button"
+            className={`auth-tab${mode === "signup" ? " active" : ""}`}
+            onClick={() => switchMode("signup")}
+          >
+            <UserPlus size={15} /> Sign Up
+          </button>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="auth-error">
+            <AlertCircle size={15} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Sign In Form */}
+        {mode === "signin" && (
+          <form className="auth-form" onSubmit={handleSignIn}>
+            <p className="auth-subtitle">Welcome back! Enter your phone number to continue.</p>
+            <div className="auth-field">
+              <label htmlFor="si-phone">Phone number</label>
+              <div className="auth-input-wrap auth-phone-wrap">
+                <span className="auth-phone-prefix">+91</span>
+                <input
+                  id="si-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="98765 43210"
+                  maxLength={10}
+                  value={phone}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  autoFocus
+                  autoComplete="tel"
+                />
+              </div>
+              <span className="auth-field-hint">{phone.length}/10 digits</span>
+            </div>
+            <button type="submit" className="auth-submit" disabled={loading}>
+              {loading ? (
+                <span className="auth-spinner" />
+              ) : (
+                <>
+                  <LogIn size={16} /> Sign In
+                </>
+              )}
+            </button>
+            <p className="auth-switch">
+              New here?{" "}
+              <button type="button" className="auth-link" onClick={() => switchMode("signup")}>
+                Create an account
+              </button>
+            </p>
+          </form>
+        )}
+
+        {/* Sign Up Form */}
+        {mode === "signup" && (
+          <form className="auth-form" onSubmit={handleSignUp}>
+            <p className="auth-subtitle">Create your account to start splitting bills with friends.</p>
+            <div className="auth-field">
+              <label htmlFor="su-name">Full name</label>
+              <div className="auth-input-wrap">
+                <Users size={16} className="auth-input-icon" />
+                <input
+                  id="su-name"
+                  type="text"
+                  placeholder="Your name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoFocus
+                  autoComplete="name"
+                />
+              </div>
+            </div>
+            <div className="auth-field">
+              <label htmlFor="su-phone">Phone number</label>
+              <div className="auth-input-wrap auth-phone-wrap">
+                <span className="auth-phone-prefix">+91</span>
+                <input
+                  id="su-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  placeholder="98765 43210"
+                  maxLength={10}
+                  value={phone}
+                  onChange={(e) => handlePhoneChange(e.target.value)}
+                  autoComplete="tel"
+                />
+              </div>
+              <span className="auth-field-hint">{phone.length}/10 digits</span>
+            </div>
+            <div className="auth-field">
+              <label htmlFor="su-upi">
+                UPI ID <span className="auth-optional">(optional)</span>
+              </label>
+              <div className="auth-input-wrap">
+                <Banknote size={16} className="auth-input-icon" />
+                <input
+                  id="su-upi"
+                  type="text"
+                  placeholder="yourname@upi"
+                  value={upiId}
+                  onChange={(e) => setUpiId(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <button type="submit" className="auth-submit" disabled={loading}>
+              {loading ? (
+                <span className="auth-spinner" />
+              ) : (
+                <>
+                  <UserPlus size={16} /> Create Account
+                </>
+              )}
+            </button>
+            <p className="auth-switch">
+              Already have an account?{" "}
+              <button type="button" className="auth-link" onClick={() => switchMode("signin")}>
+                Sign in
+              </button>
+            </p>
+          </form>
+        )}
       </div>
     </div>
   );
