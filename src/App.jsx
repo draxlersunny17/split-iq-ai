@@ -2397,6 +2397,12 @@ function SettleView({
               </div>
               <div className="txn-actions">
                 {(() => {
+                  const payer = people.find((p) => p.id === tx.from.id);
+                  const isCurrentUserThePayer =
+                    payer?.supabaseId &&
+                    currentUser?.id &&
+                    payer?.supabaseId === currentUser?.id;
+                  if (!isCurrentUserThePayer) return null;
                   const recipient = people.find((p) => p.id === tx.to.id);
                   const upiId = recipient?.upiId;
                   const gpayLink = upiId
