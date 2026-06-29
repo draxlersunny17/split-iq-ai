@@ -414,6 +414,7 @@ function App() {
   const [sessionLoading, setSessionLoading] = useState(() => !!currentUser);
   const [pendingNav, setPendingNav] = useState(null);
   const settleUnsavedRef = useRef(false);
+  const settleEnterSnapshotRef = useRef(null);
 
   // ── Refs for DB sync
   const syncTimerRef = useRef(null);
@@ -692,6 +693,9 @@ function App() {
     ) {
       setPendingNav(nextView);
       return;
+    }
+    if (nextView === "settle") {
+      settleEnterSnapshotRef.current = settle;
     }
     setAnimKey(nextView);
     dispatch(splitwiserActions.setView(nextView));
@@ -1018,6 +1022,9 @@ function App() {
               onDirtyChange={(dirty) => {
                 settleUnsavedRef.current = dirty;
               }}
+              onSaved={(savedSettle) => {
+                settleEnterSnapshotRef.current = savedSettle;
+              }}
               onShareOpen={(data) => {
                 setShareData(data);
                 setShareModalOpen(true);
@@ -1060,6 +1067,13 @@ function App() {
               <button
                 className="unsaved-leave-btn"
                 onClick={() => {
+                  if (settleEnterSnapshotRef.current) {
+                    dispatch(
+                      splitwiserActions.restoreSettle(
+                        settleEnterSnapshotRef.current,
+                      ),
+                    );
+                  }
                   settleUnsavedRef.current = false;
                   setAnimKey(pendingNav);
                   dispatch(splitwiserActions.setView(pendingNav));
@@ -1846,13 +1860,13 @@ function SettleView({
   people,
   onShareOpen,
   onDirtyChange,
+  onSaved,
   currentUser,
   loading,
 }) {
   const dispatch = useDispatch();
-  const { mode, singleId, customAmounts, settled } = useSelector(
-    (s) => s.splitwiser.settle,
-  );
+  const settle = useSelector((s) => s.splitwiser.settle);
+  const { mode, singleId, customAmounts, settled } = settle;
   const { activeSession } = useSelector((s) => s.splitwiser);
   const [qrTransaction, setQrTransaction] = useState(null);
   const [noUpiName, setNoUpiName] = useState(null);
@@ -1904,6 +1918,18 @@ function SettleView({
     hasChangedSinceMount &&
     !saveState?.id &&
     saveState !== "saving";
+
+  useEffect(() => {
+    if (activeSession?.expenseId && !hasChangedSinceMount) {
+      setSaveState({ id: activeSession.expenseId });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const customAmountsJson = JSON.stringify(customAmounts);
+  useEffect(() => {
+    if (saveState?.id) setSaveState(null);
+  }, [mode, singleId, customAmountsJson]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1982,6 +2008,7 @@ function SettleView({
         singleId,
         customAmountsJson: JSON.stringify(customAmounts),
       };
+      onSaved?.(settle);
     } catch (e) {
       setSaveState({ error: e.message || "Save failed" });
     }
