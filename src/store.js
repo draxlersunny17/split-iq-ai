@@ -18,10 +18,7 @@ function normalizeNumber(value) {
 }
 
 function recalculateBill(nextBill) {
-  const subtotal = nextBill.items.reduce(
-    (sum, item) => sum + normalizeNumber(item.price),
-    0,
-  );
+  const subtotal = nextBill.items.reduce((sum, item) => sum + normalizeNumber(item.price), 0);
   return {
     ...nextBill,
     subtotal,
@@ -51,10 +48,46 @@ const appSlice = createSlice({
       customAmounts: {},
       settled: {},
     },
+    currentUser: (() => {
+      try {
+        const s = localStorage.getItem("splitiq_user");
+        return s ? JSON.parse(s) : null;
+      } catch {
+        return null;
+      }
+    })(),
+    activeSession: (() => {
+      try {
+        const s = localStorage.getItem("splitiq_active_session");
+        return s ? JSON.parse(s) : { expenseId: null, groupId: null };
+      } catch {
+        return { expenseId: null, groupId: null };
+      }
+    })(),
   },
   reducers: {
     setView(state, action) {
       state.view = action.payload;
+    },
+    setCurrentUser(state, action) {
+      state.currentUser = action.payload;
+      try {
+        if (action.payload) {
+          localStorage.setItem("splitiq_user", JSON.stringify(action.payload));
+        } else {
+          localStorage.removeItem("splitiq_user");
+        }
+      } catch {}
+    },
+    setActiveSession(state, action) {
+      state.activeSession = action.payload || { expenseId: null, groupId: null };
+      try {
+        if (action.payload?.expenseId) {
+          localStorage.setItem("splitiq_active_session", JSON.stringify(action.payload));
+        } else {
+          localStorage.removeItem("splitiq_active_session");
+        }
+      } catch {}
     },
     setStatus(state, action) {
       state.status = action.payload;
@@ -84,9 +117,7 @@ const appSlice = createSlice({
       const { id, patch } = action.payload;
       state.bill = recalculateBill({
         ...state.bill,
-        items: state.bill.items.map((item) =>
-          item.id === id ? { ...item, ...patch } : item,
-        ),
+        items: state.bill.items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
       });
     },
     removeItem(state, action) {
@@ -107,21 +138,19 @@ const appSlice = createSlice({
     },
     addPerson(state, action) {
       const payload = action.payload;
-      const name = (
-        typeof payload === "string" ? payload : payload.name || ""
-      )?.trim();
-      const upiId = (
-        typeof payload === "string" ? "" : payload.upiId || ""
-      )?.trim();
-      if (name) {
-        state.people.push({ id: crypto.randomUUID(), name, upiId });
-      }
+      const name = (typeof payload === "string" ? payload : payload.name || "")?.trim();
+      const upiId = (typeof payload === "string" ? "" : payload.upiId || "")?.trim();
+      const supabaseId = typeof payload === "object" ? payload.supabaseId || null : null;
+      // Preserve id if provided (e.g. from loadSession) so settle singleId mapping stays valid
+      const id = typeof payload === "object" && payload.id ? payload.id : crypto.randomUUID();
+      if (!name) return;
+      // Prevent duplicates: skip if a person with the same supabaseId already exists
+      if (supabaseId && state.people.some((p) => p.supabaseId === supabaseId)) return;
+      state.people.push({ id, name, upiId, supabaseId });
     },
     updatePerson(state, action) {
       const { id, ...fields } = action.payload;
-      state.people = state.people.map((person) =>
-        person.id === id ? { ...person, ...fields } : person,
-      );
+      state.people = state.people.map((person) => (person.id === id ? { ...person, ...fields } : person));
     },
     removePerson(state, action) {
       const id = action.payload;
@@ -143,6 +172,7 @@ const appSlice = createSlice({
         customAmounts: {},
         settled: {},
       };
+      // Keep activeSession so a page reload still fetches data from API
     },
     setInsight(state, action) {
       state.insight = action.payload;
@@ -156,6 +186,16 @@ const appSlice = createSlice({
         singleId: null,
         customAmounts: {},
         settled: {},
+      };
+    },
+    restoreSettle(state, action) {
+      // Atomically restore settle state without wiping singleId/customAmounts
+      const { mode, singleId, customAmounts, settled } = action.payload || {};
+      state.settle = {
+        mode: mode || null,
+        singleId: singleId || null,
+        customAmounts: customAmounts || {},
+        settled: settled || {},
       };
     },
     setSettleSingleId(state, action) {
