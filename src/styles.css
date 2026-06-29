@@ -4608,6 +4608,62 @@ html.dark .insight-card {
   max-width: 360px;
 }
 
+/* ── Unsaved-changes warning modal ── */
+.unsaved-warn-modal {
+ max-width: 360px;
+}
+
+.unsaved-warn-body {
+ padding: 8px 4px 4px;
+}
+
+.unsaved-warn-body p {
+ margin: 0;
+ font-size: 14px;
+ color: var(--text-primary);
+ line-height: 1.5;
+}
+
+.unsaved-warn-actions {
+ display: flex;
+ gap: 10px;
+ padding: 12px 4px 4px;
+}
+
+.unsaved-leave-btn {
+ flex: 1;
+ min-height: 38px;
+ border-radius: 9px;
+ border: 1px solid var(--border);
+ background: var(--surface-2);
+ color: var(--text-secondary);
+ font-size: 13px;
+ font-weight: 500;
+ cursor: pointer;
+ transition: background var(--dur-fast);
+}
+
+.unsaved-leave-btn:hover {
+ background: var(--surface-3);
+}
+
+.unsaved-stay-btn {
+ flex: 1.4;
+ min-height: 38px;
+ border-radius: 9px;
+ border: none;
+ background: var(--grad-brand);
+ color: hashtag#fff;
+ font-size: 13px;
+ font-weight: 600;
+ cursor: pointer;
+ transition: opacity var(--dur-fast);
+}
+
+.unsaved-stay-btn:hover {
+ opacity: 0.9;
+}
+
 .no-upi-body {
   padding: 8px 4px 4px;
   display: flex;

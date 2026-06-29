@@ -412,6 +412,8 @@ function App() {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareData, setShareData] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(() => !!currentUser);
+  const [pendingNav, setPendingNav] = useState(null);
+  const settleUnsavedRef = useRef(false);
 
   // ── Refs for DB sync
   const syncTimerRef = useRef(null);
@@ -683,6 +685,14 @@ function App() {
   }
 
   function setView(nextView) {
+    if (
+      view === "settle" &&
+      settleUnsavedRef.current &&
+      nextView !== "settle"
+    ) {
+      setPendingNav(nextView);
+      return;
+    }
     setAnimKey(nextView);
     dispatch(splitwiserActions.setView(nextView));
   }
@@ -1005,6 +1015,9 @@ function App() {
               people={people}
               currentUser={currentUser}
               loading={sessionLoading}
+              onDirtyChange={(dirty) => {
+                settleUnsavedRef.current = dirty;
+              }}
               onShareOpen={(data) => {
                 setShareData(data);
                 setShareModalOpen(true);
@@ -1018,6 +1031,53 @@ function App() {
       </main>
 
       <BottomNav view={view} setView={setView} nav={nav} />
+      {pendingNav && (
+        <div className="modal-overlay" onClick={() => setPendingNav(null)}>
+          <div
+            className="modal unsaved-warn-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div className="modal-title">
+                <AlertTriangle size={16} />
+                <span>Unsaved split</span>
+              </div>
+              <button
+                className="icon-btn"
+                onClick={() => setPendingNav(null)}
+                aria-label="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="unsaved-warn-body">
+              <p>
+                You've set up a split but haven't saved it yet. Leave without
+                saving?
+              </p>
+            </div>
+            <div className="unsaved-warn-actions">
+              <button
+                className="unsaved-leave-btn"
+                onClick={() => {
+                  settleUnsavedRef.current = false;
+                  setAnimKey(pendingNav);
+                  dispatch(splitwiserActions.setView(pendingNav));
+                  setPendingNav(null);
+                }}
+              >
+                Leave
+              </button>
+              <button
+                className="unsaved-stay-btn"
+                onClick={() => setPendingNav(null)}
+              >
+                Stay &amp; save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {shareModalOpen && (
         <ShareMessageModal
           bill={bill}
@@ -1785,6 +1845,7 @@ function SettleView({
   bill,
   people,
   onShareOpen,
+  onDirtyChange,
   currentUser,
   loading,
 }) {
@@ -1823,6 +1884,23 @@ function SettleView({
   const hasPayments =
     mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
   const settledCount = Object.values(settled).filter(Boolean).length;
+
+  // Notify parent whether there are unsaved changes
+  const isDirty = hasPayments && !saveState?.id && saveState !== "saving";
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Warn on browser/tab close when dirty
+  useEffect(() => {
+    if (!isDirty) return;
+    function handleBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
 
   if (loading) {
     return (
