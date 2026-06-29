@@ -23,11 +23,18 @@ export async function signIn(phone_number) {
 export async function signUp({ name, phone_number, upi_id }) {
   const { data, error } = await supabase
     .from("users")
-    .insert([{ name: name.trim(), phone_number: phone_number.trim(), upi_id: upi_id?.trim() || null }])
+    .insert([
+      {
+        name: name.trim(),
+        phone_number: phone_number.trim(),
+        upi_id: upi_id?.trim() || null,
+      },
+    ])
     .select()
     .single();
   if (error) {
-    if (error.code === "23505") throw new Error("Phone number already registered. Please sign in.");
+    if (error.code === "23505")
+      throw new Error("Phone number already registered. Please sign in.");
     throw error;
   }
   return data;
@@ -36,13 +43,21 @@ export async function signUp({ name, phone_number, upi_id }) {
 // ─────────────────── USERS ───────────────────
 
 export async function getUserByPhone(phone_number) {
-  const { data, error } = await supabase.from("users").select("*").eq("phone_number", phone_number).single();
+  const { data, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("phone_number", phone_number)
+    .single();
   if (error && error.code !== "PGRST116") throw error;
   return data;
 }
 
 export async function createUser({ name, phone_number, upi_id }) {
-  const { data, error } = await supabase.from("users").insert([{ name, phone_number, upi_id }]).select().single();
+  const { data, error } = await supabase
+    .from("users")
+    .insert([{ name, phone_number, upi_id }])
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
@@ -58,7 +73,12 @@ export async function upsertUser({ name, phone_number, upi_id }) {
 }
 
 export async function updateUser(id, fields) {
-  const { data, error } = await supabase.from("users").update(fields).eq("id", id).select().single();
+  const { data, error } = await supabase
+    .from("users")
+    .update(fields)
+    .eq("id", id)
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
@@ -76,47 +96,77 @@ export async function createExpenseGroup({ title, description, created_by }) {
 }
 
 export async function getExpenseGroups(user_id) {
-  const { data, error } = await supabase.from("group_members").select("expense_groups(*)").eq("user_id", user_id);
+  const { data, error } = await supabase
+    .from("group_members")
+    .select("expense_groups(*)")
+    .eq("user_id", user_id);
   if (error) throw error;
   return data.map((row) => row.expense_groups);
 }
 
 export async function getExpenseGroupById(group_id) {
-  const { data, error } = await supabase.from("expense_groups").select("*").eq("id", group_id).single();
+  const { data, error } = await supabase
+    .from("expense_groups")
+    .select("*")
+    .eq("id", group_id)
+    .single();
   if (error) throw error;
   return data;
 }
 
 export async function deleteExpenseGroup(group_id) {
-  const { error } = await supabase.from("expense_groups").delete().eq("id", group_id);
+  const { error } = await supabase
+    .from("expense_groups")
+    .delete()
+    .eq("id", group_id);
   if (error) throw error;
 }
 
 // ─────────────────── GROUP MEMBERS ───────────────────
 
 export async function addGroupMember(group_id, user_id) {
-  const { data, error } = await supabase.from("group_members").insert([{ group_id, user_id }]).select().single();
+  const { data, error } = await supabase
+    .from("group_members")
+    .insert([{ group_id, user_id }])
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
 
 export async function getGroupMembers(group_id) {
-  const { data, error } = await supabase.from("group_members").select("users(*)").eq("group_id", group_id);
+  const { data, error } = await supabase
+    .from("group_members")
+    .select("users(*)")
+    .eq("group_id", group_id);
   if (error) throw error;
   return data.map((row) => row.users);
 }
 
 export async function removeGroupMember(group_id, user_id) {
-  const { error } = await supabase.from("group_members").delete().eq("group_id", group_id).eq("user_id", user_id);
+  const { error } = await supabase
+    .from("group_members")
+    .delete()
+    .eq("group_id", group_id)
+    .eq("user_id", user_id);
   if (error) throw error;
 }
 
 // ─────────────────── EXPENSES ───────────────────
 
-export async function createExpense({ group_id, title, total_amount, notes, created_by, expense_date }) {
+export async function createExpense({
+  group_id,
+  title,
+  total_amount,
+  notes,
+  created_by,
+  expense_date,
+}) {
   const { data, error } = await supabase
     .from("expenses")
-    .insert([{ group_id, title, total_amount, notes, created_by, expense_date }])
+    .insert([
+      { group_id, title, total_amount, notes, created_by, expense_date },
+    ])
     .select()
     .single();
   if (error) throw error;
@@ -148,7 +198,10 @@ export async function getExpenseById(expense_id) {
 }
 
 export async function deleteExpense(expense_id) {
-  const { error } = await supabase.from("expenses").delete().eq("id", expense_id);
+  const { error } = await supabase
+    .from("expenses")
+    .delete()
+    .eq("id", expense_id);
   if (error) throw error;
 }
 
@@ -166,7 +219,10 @@ export async function addExpensePayer(expense_id, user_id, paid_amount) {
 
 export async function addExpensePayers(payers) {
   // payers: [{ expense_id, user_id, paid_amount }]
-  const { data, error } = await supabase.from("expense_payers").insert(payers).select();
+  const { data, error } = await supabase
+    .from("expense_payers")
+    .insert(payers)
+    .select();
   if (error) throw error;
   return data;
 }
@@ -185,7 +241,10 @@ export async function addExpenseParticipant(expense_id, user_id, owed_amount) {
 
 export async function addExpenseParticipants(participants) {
   // participants: [{ expense_id, user_id, owed_amount }]
-  const { data, error } = await supabase.from("expense_participants").insert(participants).select();
+  const { data, error } = await supabase
+    .from("expense_participants")
+    .insert(participants)
+    .select();
   if (error) throw error;
   return data;
 }
@@ -204,7 +263,10 @@ export async function addFoodItem(expense_id, item_name, item_cost) {
 
 export async function addFoodItems(items) {
   // items: [{ expense_id, item_name, item_cost }]
-  const { data, error } = await supabase.from("food_items").insert(items).select();
+  const { data, error } = await supabase
+    .from("food_items")
+    .insert(items)
+    .select();
   if (error) throw error;
   return data;
 }
@@ -223,7 +285,10 @@ export async function addFoodItemConsumer(food_item_id, user_id) {
 
 export async function addFoodItemConsumers(consumers) {
   // consumers: [{ food_item_id, user_id }]
-  const { data, error } = await supabase.from("food_item_consumers").insert(consumers).select();
+  const { data, error } = await supabase
+    .from("food_item_consumers")
+    .insert(consumers)
+    .select();
   if (error) throw error;
   return data;
 }
@@ -302,7 +367,10 @@ export async function saveSplitSession({ people, bill, groupId, createdBy }) {
       (item.assignedTo || []).forEach((personId) => {
         const person = people.find((p) => p.id === personId);
         if (person?.supabaseId) {
-          consumers.push({ food_item_id: foodItemId, user_id: person.supabaseId });
+          consumers.push({
+            food_item_id: foodItemId,
+            user_id: person.supabaseId,
+          });
         }
       });
     });
@@ -325,7 +393,13 @@ export async function saveSplitSession({ people, bill, groupId, createdBy }) {
   const participants = Object.entries(participantMap)
     .map(([personId, owed]) => {
       const person = people.find((p) => p.id === personId);
-      return person?.supabaseId ? { expense_id: expense.id, user_id: person.supabaseId, owed_amount: owed } : null;
+      return person?.supabaseId
+        ? {
+            expense_id: expense.id,
+            user_id: person.supabaseId,
+            owed_amount: owed,
+          }
+        : null;
     })
     .filter(Boolean);
 
@@ -393,7 +467,10 @@ export async function saveFullExpense({
       group_id: existingGroupId || null,
       title: bill.merchant || "Split expense",
       total_amount: bill.total,
-      notes: bill.currency && bill.currency !== "INR" ? `Currency: ${bill.currency}` : null,
+      notes:
+        bill.currency && bill.currency !== "INR"
+          ? `Currency: ${bill.currency}`
+          : null,
       created_by: currentUser.id,
       expense_date: bill.date || new Date().toISOString().split("T")[0],
     });
@@ -402,7 +479,9 @@ export async function saveFullExpense({
 
   // ── Participants (who owes what) ─────────────────────────────
   // split entries already spread supabaseId from people via calculateSplit
-  const missingIds = split.filter((p) => p.total > 0.005 && !p.supabaseId).map((p) => p.name);
+  const missingIds = split
+    .filter((p) => p.total > 0.005 && !p.supabaseId)
+    .map((p) => p.name);
   if (missingIds.length > 0) {
     throw new Error(
       `Cannot save: missing Supabase user links for ${missingIds.join(", ")}. Re-add them from People tab.`,
@@ -410,10 +489,18 @@ export async function saveFullExpense({
   }
 
   // Clear existing records first (safe to call even if none exist)
-  const { error: delPErr } = await supabase.from("expense_participants").delete().eq("expense_id", expenseId);
-  if (delPErr) throw new Error(`Failed to clear old participants: ${delPErr.message}`);
-  const { error: delPayErr } = await supabase.from("expense_payers").delete().eq("expense_id", expenseId);
-  if (delPayErr) throw new Error(`Failed to clear old payers: ${delPayErr.message}`);
+  const { error: delPErr } = await supabase
+    .from("expense_participants")
+    .delete()
+    .eq("expense_id", expenseId);
+  if (delPErr)
+    throw new Error(`Failed to clear old participants: ${delPErr.message}`);
+  const { error: delPayErr } = await supabase
+    .from("expense_payers")
+    .delete()
+    .eq("expense_id", expenseId);
+  if (delPayErr)
+    throw new Error(`Failed to clear old payers: ${delPayErr.message}`);
 
   const participants = split
     .filter((p) => p.total > 0.005 && p.supabaseId)
@@ -430,7 +517,9 @@ export async function saveFullExpense({
     .filter(([, amount]) => Number(amount) > 0.005)
     .map(([personId, paid_amount]) => {
       // Find in split first (has supabaseId spread), fallback to people
-      const person = split.find((p) => p.id === personId) || people.find((p) => p.id === personId);
+      const person =
+        split.find((p) => p.id === personId) ||
+        people.find((p) => p.id === personId);
       if (!person?.supabaseId) return null;
       return {
         expense_id: expenseId,
@@ -451,7 +540,10 @@ export async function saveFullExpense({
  * Updates the description of an expense_group (used to store AI insight summary).
  */
 export async function updateGroupDescription(groupId, description) {
-  await supabase.from("expense_groups").update({ description }).eq("id", groupId);
+  await supabase
+    .from("expense_groups")
+    .update({ description })
+    .eq("id", groupId);
 }
 
 /**
@@ -467,7 +559,9 @@ export async function createSession({ title, createdBy, date, notes }) {
   if (gErr) throw gErr;
 
   // Add creator as first member
-  await supabase.from("group_members").insert([{ group_id: group.id, user_id: createdBy }]);
+  await supabase
+    .from("group_members")
+    .insert([{ group_id: group.id, user_id: createdBy }]);
 
   const { data: expense, error: eErr } = await supabase
     .from("expenses")
@@ -493,7 +587,10 @@ export async function createSession({ title, createdBy, date, notes }) {
  */
 export async function syncSessionPeople(groupId, supabaseUserIds) {
   if (!supabaseUserIds.length) return;
-  const rows = supabaseUserIds.map((userId) => ({ group_id: groupId, user_id: userId }));
+  const rows = supabaseUserIds.map((userId) => ({
+    group_id: groupId,
+    user_id: userId,
+  }));
   const { error } = await supabase
     .from("group_members")
     .upsert(rows, { onConflict: "group_id,user_id", ignoreDuplicates: true });
@@ -508,12 +605,19 @@ export async function syncSessionItems(expenseId, bill, people, settle = null) {
   // Build the settle payload (supabaseId-keyed) if provided
   let settlePayload = null;
   if (settle?.mode) {
-    const localToSupabase = Object.fromEntries(people.filter((p) => p.supabaseId).map((p) => [p.id, p.supabaseId]));
+    const localToSupabase = Object.fromEntries(
+      people.filter((p) => p.supabaseId).map((p) => [p.id, p.supabaseId]),
+    );
     settlePayload = {
       mode: settle.mode,
-      singleId: settle.singleId ? localToSupabase[settle.singleId] || null : null,
+      singleId: settle.singleId
+        ? localToSupabase[settle.singleId] || null
+        : null,
       customAmounts: Object.fromEntries(
-        Object.entries(settle.customAmounts || {}).map(([lid, v]) => [localToSupabase[lid] || lid, v]),
+        Object.entries(settle.customAmounts || {}).map(([lid, v]) => [
+          localToSupabase[lid] || lid,
+          v,
+        ]),
       ),
     };
   }
@@ -567,7 +671,10 @@ export async function syncSessionItems(expenseId, bill, people, settle = null) {
     (item.assignedTo || []).forEach((personId) => {
       const person = people.find((p) => p.id === personId);
       if (person?.supabaseId) {
-        consumers.push({ food_item_id: foodItemId, user_id: person.supabaseId });
+        consumers.push({
+          food_item_id: foodItemId,
+          user_id: person.supabaseId,
+        });
       }
     });
   });
@@ -582,7 +689,9 @@ export async function syncSessionItems(expenseId, bill, people, settle = null) {
  * Uses supabaseId as keys (local UUIDs regenerate on refresh).
  */
 export async function syncSettleState(expenseId, settle, people, bill) {
-  const localToSupabase = Object.fromEntries(people.filter((p) => p.supabaseId).map((p) => [p.id, p.supabaseId]));
+  const localToSupabase = Object.fromEntries(
+    people.filter((p) => p.supabaseId).map((p) => [p.id, p.supabaseId]),
+  );
 
   // Build notes from the bill we already have in Redux — no SELECT needed
   const existing = bill
@@ -597,9 +706,14 @@ export async function syncSettleState(expenseId, settle, people, bill) {
   const settlePayload = settle?.mode
     ? {
         mode: settle.mode,
-        singleId: settle.singleId ? localToSupabase[settle.singleId] || null : null,
+        singleId: settle.singleId
+          ? localToSupabase[settle.singleId] || null
+          : null,
         customAmounts: Object.fromEntries(
-          Object.entries(settle.customAmounts || {}).map(([lid, v]) => [localToSupabase[lid] || lid, v]),
+          Object.entries(settle.customAmounts || {}).map(([lid, v]) => [
+            localToSupabase[lid] || lid,
+            v,
+          ]),
         ),
         // Convert settled keys "localId1-localId2" → "supabaseId1-supabaseId2"
         // UUIDs have 5 segments (4 hyphens each), so split at position 5
@@ -628,7 +742,11 @@ export async function syncSettleState(expenseId, settle, people, bill) {
  * Loads a saved session from Supabase and reconstructs the Redux bill + people shape.
  */
 export async function loadSession(expenseId) {
-  const { data: expense, error: eErr } = await supabase.from("expenses").select("*").eq("id", expenseId).single();
+  const { data: expense, error: eErr } = await supabase
+    .from("expenses")
+    .select("*")
+    .eq("id", expenseId)
+    .single();
   if (eErr) throw eErr;
 
   // Parse stored bill metadata from notes (JSON)
@@ -662,7 +780,9 @@ export async function loadSession(expenseId) {
     }));
 
   // Map supabaseId → local id for rebuilding assignedTo
-  const supabaseToLocal = Object.fromEntries(people.map((p) => [p.supabaseId, p.id]));
+  const supabaseToLocal = Object.fromEntries(
+    people.map((p) => [p.supabaseId, p.id]),
+  );
 
   const bill = {
     merchant: expense.title === "Split session" ? "" : expense.title || "",
@@ -678,7 +798,9 @@ export async function loadSession(expenseId) {
       name: fi.item_name,
       quantity: 1,
       price: Number(fi.item_cost),
-      assignedTo: (fi.food_item_consumers || []).map((c) => supabaseToLocal[c.user_id]).filter(Boolean),
+      assignedTo: (fi.food_item_consumers || [])
+        .map((c) => supabaseToLocal[c.user_id])
+        .filter(Boolean),
     })),
   };
 
@@ -705,7 +827,9 @@ export async function loadSession(expenseId) {
     } else {
       // Multiple payers or partial — restore as custom
       const customAmounts = Object.fromEntries(
-        payerRows.map((r) => [supabaseToLocal[r.user_id], Number(r.paid_amount)]).filter(([localId]) => localId),
+        payerRows
+          .map((r) => [supabaseToLocal[r.user_id], Number(r.paid_amount)])
+          .filter(([localId]) => localId),
       );
       settle = { mode: "custom", singleId: null, customAmounts };
     }
@@ -716,7 +840,10 @@ export async function loadSession(expenseId) {
       mode: s.mode,
       singleId: s.singleId ? supabaseToLocal[s.singleId] || null : null,
       customAmounts: Object.fromEntries(
-        Object.entries(s.customAmounts || {}).map(([sid, v]) => [supabaseToLocal[sid] || sid, v]),
+        Object.entries(s.customAmounts || {}).map(([sid, v]) => [
+          supabaseToLocal[sid] || sid,
+          v,
+        ]),
       ),
       // Restore settled keys "supabaseId1-supabaseId2" → "localId1-localId2"
       settled: Object.fromEntries(
@@ -767,4 +894,49 @@ export async function loadSession(expenseId) {
  */
 export async function deleteSession(groupId) {
   await supabase.from("expense_groups").delete().eq("id", groupId);
+}
+
+/**
+ * Returns the most recent active session (expenseId + groupId) for a given user.
+ * Used as a fallback when splitiq_active_session is missing from localStorage.
+ * Returns null if no session exists.
+ */
+export async function getLatestSessionForUser(userId) {
+  // Check all three tables in parallel — a user can be linked to an expense via
+  // group_members (live session), expense_participants (saved split), or expense_payers.
+  const [memberRes, participantRes, payerRes] = await Promise.all([
+    supabase.from("group_members").select("group_id").eq("user_id", userId),
+    supabase
+      .from("expense_participants")
+      .select("expense_id")
+      .eq("user_id", userId),
+    supabase.from("expense_payers").select("expense_id").eq("user_id", userId),
+  ]);
+
+  const groupIds = (memberRes.data || []).map((m) => m.group_id);
+  const directExpIds = [
+    ...new Set([
+      ...(participantRes.data || []).map((r) => r.expense_id),
+      ...(payerRes.data || []).map((r) => r.expense_id),
+    ]),
+  ];
+
+  if (groupIds.length === 0 && directExpIds.length === 0) return null;
+
+  // Build OR filter so we catch expenses from any of the three routes
+  const orParts = [];
+  if (groupIds.length > 0) orParts.push(`group_id.in.(${groupIds.join(",")})`);
+  if (directExpIds.length > 0)
+    orParts.push(`id.in.(${directExpIds.join(",")})`);
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("id, group_id")
+    .or(orParts.join(","))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { expenseId: data.id, groupId: data.group_id };
 }

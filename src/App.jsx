@@ -47,6 +47,7 @@ import {
   searchUsers,
   signIn,
   signUp,
+  getLatestSessionForUser,
   syncSessionItems,
   syncSessionPeople,
   syncSettleState,
@@ -98,12 +99,18 @@ const TAG_RULES = [
     "🍺",
     /beer|alcohol|wine|whisky|whiskey|vodka|rum|gin|cocktail|lager|ale|spirits|brandy|champagne|mojito|shot|pint|draught/i,
   ],
-  ["☕", /coffee|espresso|latte|cappuccino|americano|mocha|\btea\b|chai|macchiato|cold.?brew|frappe/i],
+  [
+    "☕",
+    /coffee|espresso|latte|cappuccino|americano|mocha|\btea\b|chai|macchiato|cold.?brew|frappe/i,
+  ],
   [
     "🍰",
     /dessert|cake|ice.?cream|waffle|brownie|pudding|mousse|pastry|cookie|pie|cheesecake|gelato|sorbet|sundae|tiramisu/i,
   ],
-  ["🥤", /juice|soda|\bwater\b|cola|pepsi|sprite|lemonade|smoothie|milkshake|soft.?drink|mocktail|lassi|nimbu/i],
+  [
+    "🥤",
+    /juice|soda|\bwater\b|cola|pepsi|sprite|lemonade|smoothie|milkshake|soft.?drink|mocktail|lassi|nimbu/i,
+  ],
 ];
 
 function getItemTag(name) {
@@ -134,7 +141,10 @@ function detectAnomalies(bill) {
     });
 
   const expected =
-    subtotal + normalizeNumber(bill.tax) + normalizeNumber(bill.serviceCharge) - normalizeNumber(bill.discount);
+    subtotal +
+    normalizeNumber(bill.tax) +
+    normalizeNumber(bill.serviceCharge) -
+    normalizeNumber(bill.discount);
   const stated = normalizeNumber(bill.total);
   if (stated > 0 && Math.abs(expected - stated) / stated > 0.05)
     anomalies.push({
@@ -142,7 +152,9 @@ function detectAnomalies(bill) {
       message: `Total mismatch: items sum to ${formatMoney(expected, bill.currency)}, bill says ${formatMoney(stated, bill.currency)}`,
     });
 
-  const dominant = bill.items.slice().sort((a, b) => normalizeNumber(b.price) - normalizeNumber(a.price))[0];
+  const dominant = bill.items
+    .slice()
+    .sort((a, b) => normalizeNumber(b.price) - normalizeNumber(a.price))[0];
   if (dominant && normalizeNumber(dominant.price) / subtotal > 0.4)
     anomalies.push({
       type: "info",
@@ -161,12 +173,16 @@ function strSimilarity(a, b) {
   const longer = s.length >= t.length ? s : t;
   const shorter = s.length < t.length ? s : t;
   if (shorter.length < 3) return 0;
-  if (longer.includes(shorter) && shorter.length / longer.length > 0.75) return 1;
+  if (longer.includes(shorter) && shorter.length / longer.length > 0.75)
+    return 1;
   const dp = Array.from({ length: shorter.length + 1 }, (_, i) => i);
   for (let i = 1; i <= longer.length; i++) {
     let prev = i;
     for (let j = 1; j <= shorter.length; j++) {
-      const cur = longer[i - 1] === shorter[j - 1] ? dp[j - 1] : 1 + Math.min(dp[j - 1], dp[j], prev);
+      const cur =
+        longer[i - 1] === shorter[j - 1]
+          ? dp[j - 1]
+          : 1 + Math.min(dp[j - 1], dp[j], prev);
       dp[j - 1] = prev;
       prev = cur;
     }
@@ -179,7 +195,8 @@ function findDuplicates(items) {
   const pairs = [];
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
-      if (strSimilarity(items[i].name, items[j].name) > 0.82) pairs.push([items[i].name, items[j].name]);
+      if (strSimilarity(items[i].name, items[j].name) > 0.82)
+        pairs.push([items[i].name, items[j].name]);
     }
   }
   return pairs;
@@ -188,12 +205,17 @@ function findDuplicates(items) {
 function sanitizeParsedBill(parsed) {
   const items = Array.isArray(parsed.items) ? parsed.items : [];
   const subtotal = normalizeNumber(
-    parsed.subtotal || items.reduce((sum, item) => sum + normalizeNumber(item.price), 0),
+    parsed.subtotal ||
+      items.reduce((sum, item) => sum + normalizeNumber(item.price), 0),
   );
   const tax = normalizeNumber(parsed.tax);
-  const serviceCharge = normalizeNumber(parsed.serviceCharge || parsed.service_charge);
+  const serviceCharge = normalizeNumber(
+    parsed.serviceCharge || parsed.service_charge,
+  );
   const discount = normalizeNumber(parsed.discount);
-  const total = normalizeNumber(parsed.total || subtotal + tax + serviceCharge - discount);
+  const total = normalizeNumber(
+    parsed.total || subtotal + tax + serviceCharge - discount,
+  );
   return {
     merchant: String(parsed.merchant || parsed.vendor || ""),
     date: normalizeDate(parsed.date),
@@ -215,25 +237,38 @@ function sanitizeParsedBill(parsed) {
 
 function calculateSplit(bill, people) {
   const personTotals = Object.fromEntries(people.map((p) => [p.id, 0]));
-  const subtotal = bill.items.reduce((sum, item) => sum + normalizeNumber(item.price), 0);
+  const subtotal = bill.items.reduce(
+    (sum, item) => sum + normalizeNumber(item.price),
+    0,
+  );
   // Prefer explicit tax/service/discount fields when available (stored in notes, always accurate).
   // Fall back to deriving extras from bill.total (handles cases where notes fields are zero).
   const extrasFromFields =
-    normalizeNumber(bill.tax) + normalizeNumber(bill.serviceCharge) - normalizeNumber(bill.discount);
-  const extras = extrasFromFields !== 0 ? extrasFromFields : Math.max(0, normalizeNumber(bill.total) - subtotal);
+    normalizeNumber(bill.tax) +
+    normalizeNumber(bill.serviceCharge) -
+    normalizeNumber(bill.discount);
+  const extras =
+    extrasFromFields !== 0
+      ? extrasFromFields
+      : Math.max(0, normalizeNumber(bill.total) - subtotal);
   bill.items.forEach((item) => {
-    const assignees = item.assignedTo?.length ? item.assignedTo : people.map((p) => p.id);
+    const assignees = item.assignedTo?.length
+      ? item.assignedTo
+      : people.map((p) => p.id);
     const baseShare = splitAmount(item.price, assignees);
     const itemRatio = subtotal > 0 ? normalizeNumber(item.price) / subtotal : 0;
     const extraShare = splitAmount(extras * itemRatio, assignees);
     assignees.forEach((id) => {
-      personTotals[id] = normalizeNumber(personTotals[id]) + baseShare + extraShare;
+      personTotals[id] =
+        normalizeNumber(personTotals[id]) + baseShare + extraShare;
     });
   });
   return people.map((p) => ({
     ...p,
     total: Math.round((personTotals[p.id] || 0) * 100) / 100,
-    items: bill.items.filter((item) => !item.assignedTo?.length || item.assignedTo.includes(p.id)),
+    items: bill.items.filter(
+      (item) => !item.assignedTo?.length || item.assignedTo.includes(p.id),
+    ),
   }));
 }
 
@@ -250,8 +285,12 @@ function simplifyDebts(split, paymentAmounts) {
     net: normalizeNumber(paymentAmounts[p.id] || 0) - normalizeNumber(p.total),
   }));
 
-  const creditors = balances.filter((b) => b.net > 0.005).map((b) => ({ ...b }));
-  const debtors = balances.filter((b) => b.net < -0.005).map((b) => ({ ...b, net: -b.net }));
+  const creditors = balances
+    .filter((b) => b.net > 0.005)
+    .map((b) => ({ ...b }));
+  const debtors = balances
+    .filter((b) => b.net < -0.005)
+    .map((b) => ({ ...b, net: -b.net }));
 
   const transactions = [];
   const creds = [...creditors];
@@ -335,7 +374,13 @@ async function fetchSmartSplit({ items, people }) {
   return JSON.parse(jsonText);
 }
 
-async function generateShareMessage({ bill, people, split, transactions, paymentAmounts }) {
+async function generateShareMessage({
+  bill,
+  people,
+  split,
+  transactions,
+  paymentAmounts,
+}) {
   const response = await fetch("/api/share-message", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -350,16 +395,23 @@ async function generateShareMessage({ bill, people, split, transactions, payment
 
 function App() {
   const dispatch = useDispatch();
-  const { view, people, bill, status, insightLoading, insight, currentUser, activeSession } = useSelector(
-    (state) => state.splitwiser,
-  );
+  const {
+    view,
+    people,
+    bill,
+    status,
+    insightLoading,
+    insight,
+    currentUser,
+    activeSession,
+  } = useSelector((state) => state.splitwiser);
   const settle = useSelector((state) => state.splitwiser.settle);
   const split = useMemo(() => calculateSplit(bill, people), [bill, people]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [animKey, setAnimKey] = useState(view);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareData, setShareData] = useState(null);
-  const [sessionLoading, setSessionLoading] = useState(() => !!activeSession?.expenseId);
+  const [sessionLoading, setSessionLoading] = useState(() => !!currentUser);
 
   // ── Refs for DB sync
   const syncTimerRef = useRef(null);
@@ -369,17 +421,54 @@ function App() {
   const isRestoringRef = useRef(false); // suppresses syncs during restore
 
   // ── Restore session from DB on mount (after login)
+  // Depends on currentUser?.id so it re-fires when a fresh login occurs
+  // (e.g. no localStorage at mount — effect would have returned early for null user).
   useEffect(() => {
-    if (!currentUser || !activeSession?.expenseId) {
-      sessionRestoredRef.current = true;
+    if (!currentUser) {
+      // Reset flags so the next login triggers a fresh load
+      sessionRestoredRef.current = false;
+      sessionLoadStartedRef.current = false;
       setSessionLoading(false);
       return;
     }
     if (sessionLoadStartedRef.current) return; // StrictMode guard
     sessionLoadStartedRef.current = true;
-    isRestoringRef.current = true;
-    loadSession(activeSession.expenseId)
-      .then(({ bill: b, people: ps, settle: s, description }) => {
+    setSessionLoading(true);
+
+    // If no expenseId in state (e.g. localStorage was cleared), look up the
+    // most recent session for this user from Supabase before restoring.
+    const resolveExpenseId = activeSession?.expenseId
+      ? Promise.resolve(activeSession)
+      : getLatestSessionForUser(currentUser.id).then((session) => {
+          if (session) {
+            dispatch(splitwiserActions.setActiveSession(session));
+          }
+          return session;
+        });
+
+    resolveExpenseId
+      .then((session) => {
+        if (!session?.expenseId) {
+          // No session to restore
+          sessionRestoredRef.current = true;
+          setSessionLoading(false);
+          return;
+        }
+        isRestoringRef.current = true;
+        return loadSession(session.expenseId).then((r) => ({
+          ...r,
+          expenseId: session.expenseId,
+        }));
+      })
+      .then((result) => {
+        if (!result) return; // already handled above
+        const {
+          bill: b,
+          people: ps,
+          settle: s,
+          description,
+          expenseId: resolvedExpenseId,
+        } = result;
         if (b.items.length > 0 || ps.length > 0) {
           dispatch(splitwiserActions.setBill(b));
           ps.forEach((p) => dispatch(splitwiserActions.addPerson(p)));
@@ -389,11 +478,13 @@ function App() {
             // (localStorage may have more recent ticks not yet written to DB)
             let localSettled = {};
             try {
-              const raw = localStorage.getItem(`settled-${activeSession.expenseId}`);
+              const raw = localStorage.getItem(`settled-${resolvedExpenseId}`);
               if (raw) localSettled = JSON.parse(raw);
             } catch {}
             const mergedSettled = { ...(s.settled || {}), ...localSettled };
-            dispatch(splitwiserActions.restoreSettle({ ...s, settled: mergedSettled }));
+            dispatch(
+              splitwiserActions.restoreSettle({ ...s, settled: mergedSettled }),
+            );
           }
           // Restore AI insight from stored description — no API call needed
           if (description) {
@@ -409,7 +500,12 @@ function App() {
         }
       })
       .catch(() => {
-        dispatch(splitwiserActions.setActiveSession({ expenseId: null, groupId: null }));
+        dispatch(
+          splitwiserActions.setActiveSession({
+            expenseId: null,
+            groupId: null,
+          }),
+        );
       })
       .finally(() => {
         // Use setTimeout so React flushes all dispatched state updates before
@@ -421,7 +517,7 @@ function App() {
           setSessionLoading(false);
         }, 0);
       });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Sync people into group_members whenever the list changes
   const supabaseIdsKey = people
@@ -429,7 +525,13 @@ function App() {
     .filter(Boolean)
     .join(",");
   useEffect(() => {
-    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.groupId || !supabaseIdsKey) return;
+    if (
+      isRestoringRef.current ||
+      !sessionRestoredRef.current ||
+      !activeSession?.groupId ||
+      !supabaseIdsKey
+    )
+      return;
     const userIds = supabaseIdsKey.split(",");
     syncSessionPeople(activeSession.groupId, userIds).catch(() => {});
   }, [supabaseIdsKey, activeSession?.groupId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -443,17 +545,29 @@ function App() {
   // ── Save AI insight summary as expense_group description when it arrives
   useEffect(() => {
     if (!insight?.summary || !activeSession?.groupId) return;
-    const description = [insight.summary, insight.cuisine, insight.vibe].filter(Boolean).join(" · ");
+    const description = [insight.summary, insight.cuisine, insight.vibe]
+      .filter(Boolean)
+      .join(" · ");
     updateGroupDescription(activeSession.groupId, description).catch(() => {});
   }, [insight, activeSession?.groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Debounced bill / item-assignment sync (2 s after last change)
   useEffect(() => {
-    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.expenseId || !bill.items.length)
+    if (
+      isRestoringRef.current ||
+      !sessionRestoredRef.current ||
+      !activeSession?.expenseId ||
+      !bill.items.length
+    )
       return;
     clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
-      syncSessionItems(activeSession.expenseId, bill, people, settleRef.current).catch(() => {});
+      syncSessionItems(
+        activeSession.expenseId,
+        bill,
+        people,
+        settleRef.current,
+      ).catch(() => {});
     }, 2000);
     return () => clearTimeout(syncTimerRef.current);
   }, [bill, activeSession?.expenseId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -464,7 +578,10 @@ function App() {
     if (!activeSession?.expenseId) return;
     try {
       if (Object.keys(settled).length > 0) {
-        localStorage.setItem(`settled-${activeSession.expenseId}`, JSON.stringify(settled));
+        localStorage.setItem(
+          `settled-${activeSession.expenseId}`,
+          JSON.stringify(settled),
+        );
       } else {
         localStorage.removeItem(`settled-${activeSession.expenseId}`);
       }
@@ -473,11 +590,18 @@ function App() {
 
   // ── Debounced settled-state sync to DB (1 s after marking a transaction)
   useEffect(() => {
-    if (isRestoringRef.current || !sessionRestoredRef.current || !activeSession?.expenseId || !bill.items.length)
+    if (
+      isRestoringRef.current ||
+      !sessionRestoredRef.current ||
+      !activeSession?.expenseId ||
+      !bill.items.length
+    )
       return;
     clearTimeout(settledTimerRef.current);
     settledTimerRef.current = setTimeout(() => {
-      syncSettleState(activeSession.expenseId, settle, people, bill).catch(() => {});
+      syncSettleState(activeSession.expenseId, settle, people, bill).catch(
+        () => {},
+      );
     }, 1000);
     return () => clearTimeout(settledTimerRef.current);
   }, [settled, activeSession?.expenseId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -486,7 +610,8 @@ function App() {
     try {
       return (
         localStorage.getItem("theme") === "dark" ||
-        (!localStorage.getItem("theme") && window.matchMedia("(prefers-color-scheme: dark)").matches)
+        (!localStorage.getItem("theme") &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches)
       );
     } catch {
       return false;
@@ -498,8 +623,14 @@ function App() {
   }, [dark]);
 
   // Compute allSettled early so the redirect effect and nav can use it
-  const { mode: settleMode, singleId: settleSingleId, customAmounts: settleCustom, settled: settledMap } = settle;
-  const appGrandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
+  const {
+    mode: settleMode,
+    singleId: settleSingleId,
+    customAmounts: settleCustom,
+    settled: settledMap,
+  } = settle;
+  const appGrandTotal =
+    Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
   const appPaymentAmounts =
     settleMode === "single"
       ? settleSingleId
@@ -511,7 +642,9 @@ function App() {
           ? settleCustom
           : {};
   const appTxns = simplifyDebts(split, appPaymentAmounts);
-  const allSettledApp = appTxns.length > 0 && Object.values(settledMap).filter(Boolean).length === appTxns.length;
+  const allSettledApp =
+    appTxns.length > 0 &&
+    Object.values(settledMap).filter(Boolean).length === appTxns.length;
   const hasBillItems = bill.items.length > 0;
 
   // Redirect away from People tab if it becomes hidden
@@ -542,7 +675,11 @@ function App() {
 
   // Show auth page if not logged in
   if (!currentUser) {
-    return <AuthPage onAuth={(user) => dispatch(splitwiserActions.setCurrentUser(user))} />;
+    return (
+      <AuthPage
+        onAuth={(user) => dispatch(splitwiserActions.setCurrentUser(user))}
+      />
+    );
   }
 
   function setView(nextView) {
@@ -560,7 +697,11 @@ function App() {
     );
     try {
       const parsed = await analyzeBillWithAi({ file });
-      dispatch(splitwiserActions.setBill(parsed.items.length ? parsed : { ...parsed, items: emptyBill.items }));
+      dispatch(
+        splitwiserActions.setBill(
+          parsed.items.length ? parsed : { ...parsed, items: emptyBill.items },
+        ),
+      );
       setView("split");
       dispatch(
         splitwiserActions.setStatus({
@@ -575,7 +716,8 @@ function App() {
         .catch(() => {})
         .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
       // Create new DB session (replace existing)
-      if (activeSession?.groupId) deleteSession(activeSession.groupId).catch(() => {});
+      if (activeSession?.groupId)
+        deleteSession(activeSession.groupId).catch(() => {});
       createSession({
         title: parsed.merchant || "Split session",
         createdBy: currentUser.id,
@@ -587,10 +729,14 @@ function App() {
           discount: parsed.discount || 0,
         }),
       })
-        .then((session) => dispatch(splitwiserActions.setActiveSession(session)))
+        .then((session) =>
+          dispatch(splitwiserActions.setActiveSession(session)),
+        )
         .catch(() => {});
     } catch (error) {
-      dispatch(splitwiserActions.setStatus({ kind: "error", message: error.message }));
+      dispatch(
+        splitwiserActions.setStatus({ kind: "error", message: error.message }),
+      );
     }
   }
 
@@ -603,7 +749,9 @@ function App() {
       }),
     );
     try {
-      const results = await Promise.all(files.map((f) => analyzeBillWithAi({ file: f })));
+      const results = await Promise.all(
+        files.map((f) => analyzeBillWithAi({ file: f })),
+      );
       const merged = {
         merchant:
           results
@@ -634,7 +782,8 @@ function App() {
         .catch(() => {})
         .finally(() => dispatch(splitwiserActions.setInsightLoading(false)));
       // Create new DB session (replace existing)
-      if (activeSession?.groupId) deleteSession(activeSession.groupId).catch(() => {});
+      if (activeSession?.groupId)
+        deleteSession(activeSession.groupId).catch(() => {});
       createSession({
         title: merged.merchant || "Split session",
         createdBy: currentUser.id,
@@ -646,10 +795,14 @@ function App() {
           discount: merged.discount || 0,
         }),
       })
-        .then((session) => dispatch(splitwiserActions.setActiveSession(session)))
+        .then((session) =>
+          dispatch(splitwiserActions.setActiveSession(session)),
+        )
         .catch(() => {});
     } catch (error) {
-      dispatch(splitwiserActions.setStatus({ kind: "error", message: error.message }));
+      dispatch(
+        splitwiserActions.setStatus({ kind: "error", message: error.message }),
+      );
     }
   }
 
@@ -680,8 +833,16 @@ function App() {
         : "Everyone",
     }));
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Split Summary");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), "Bill Items");
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(rows),
+      "Split Summary",
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(itemRows),
+      "Bill Items",
+    );
     XLSX.writeFile(wb, `split-iq-${bill.merchant || "bill"}.xlsx`);
   }
 
@@ -697,7 +858,12 @@ function App() {
 
   return (
     <div className="app-shell">
-      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       <aside className={`sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="sidebar-header">
@@ -710,7 +876,11 @@ function App() {
               <span>Bill splitting AI</span>
             </div>
           </div>
-          <button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
+          <button
+            className="sidebar-close"
+            onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
+          >
             <X size={18} />
           </button>
         </div>
@@ -744,14 +914,19 @@ function App() {
             </div>
           </div>
           <div className="actions">
-            <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
+            <button
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label="Toggle theme"
+            >
               {dark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <button className="ghost" onClick={handleReset}>
               <RotateCcw size={16} /> <span className="btn-label">Reset</span>
             </button>
             <button onClick={exportExcel}>
-              <FileSpreadsheet size={16} /> <span className="btn-label">Export</span>
+              <FileSpreadsheet size={16} />{" "}
+              <span className="btn-label">Export</span>
             </button>
             <ProfileBubble user={currentUser} onSignOut={handleSignOut} />
           </div>
@@ -759,7 +934,11 @@ function App() {
 
         {status.kind !== "idle" && !isLoading && (
           <div className={`status ${status.kind}`}>
-            {status.kind === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+            {status.kind === "error" ? (
+              <AlertCircle size={16} />
+            ) : (
+              <CheckCircle2 size={16} />
+            )}
             <span>{status.message}</span>
           </div>
         )}
@@ -775,11 +954,23 @@ function App() {
               loading={sessionLoading}
             />
           )}
-          {view === "upload" && <UploadView onAnalyze={handleAnalyze} onMerge={handleMerge} loading={isLoading} />}
+          {view === "upload" && (
+            <UploadView
+              onAnalyze={handleAnalyze}
+              onMerge={handleMerge}
+              loading={isLoading}
+            />
+          )}
           {view === "split" &&
             (() => {
-              const { mode, singleId, customAmounts, settled: settledMap } = settle;
-              const grandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
+              const {
+                mode,
+                singleId,
+                customAmounts,
+                settled: settledMap,
+              } = settle;
+              const grandTotal =
+                Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
               const paymentAmounts =
                 mode === "single"
                   ? singleId
@@ -791,7 +982,10 @@ function App() {
                       ? customAmounts
                       : {};
               const txns = simplifyDebts(split, paymentAmounts);
-              const allSettled = txns.length > 0 && Object.values(settledMap).filter(Boolean).length === txns.length;
+              const allSettled =
+                txns.length > 0 &&
+                Object.values(settledMap).filter(Boolean).length ===
+                  txns.length;
               return (
                 <SplitView
                   bill={bill}
@@ -817,7 +1011,9 @@ function App() {
               }}
             />
           )}
-          {view === "people" && <PeopleView people={people} currentUser={currentUser} />}
+          {view === "people" && (
+            <PeopleView people={people} currentUser={currentUser} />
+          )}
         </div>
       </main>
 
@@ -857,19 +1053,43 @@ function Dashboard({ bill, people, split, setView, currentUser, loading }) {
       <section className="dashboard-grid">
         <div className="hero-panel">
           <div className="hero-copy">
-            <div className="skel" style={{ height: 14, width: 120, marginBottom: 10 }} />
-            <div className="skel" style={{ height: 36, width: "70%", marginBottom: 8 }} />
+            <div
+              className="skel"
+              style={{ height: 14, width: 120, marginBottom: 10 }}
+            />
+            <div
+              className="skel"
+              style={{ height: 36, width: "70%", marginBottom: 8 }}
+            />
             <div className="skel" style={{ height: 14, width: "50%" }} />
           </div>
-          <div className="hero-stats" style={{ width: "100%", overflow: "hidden" }}>
+          <div
+            className="hero-stats"
+            style={{ width: "100%", overflow: "hidden" }}
+          >
             {["Bill total", "Items", "People", "Settling"].map((label) => (
-              <div key={label} className="hstat" style={{ flex: 1, minWidth: 0, padding: "12px 8px" }}>
-                <div className="skel" style={{ height: 22, width: "100%", maxWidth: 64, marginBottom: 6 }} />
+              <div
+                key={label}
+                className="hstat"
+                style={{ flex: 1, minWidth: 0, padding: "12px 8px" }}
+              >
+                <div
+                  className="skel"
+                  style={{
+                    height: 22,
+                    width: "100%",
+                    maxWidth: 64,
+                    marginBottom: 6,
+                  }}
+                />
                 <span className="hstat-label">{label}</span>
               </div>
             ))}
           </div>
-          <div className="skel" style={{ height: 44, width: 160, borderRadius: 10 }} />
+          <div
+            className="skel"
+            style={{ height: 44, width: 160, borderRadius: 10 }}
+          />
         </div>
         <div className="panel wide">
           <div className="section-head">
@@ -879,10 +1099,16 @@ function Dashboard({ bill, people, split, setView, currentUser, loading }) {
             {[1, 2].map((i) => (
               <div key={i} className="settlement-row">
                 <span className="name-cell">
-                  <div className="skel" style={{ width: 32, height: 32, borderRadius: "50%" }} />
+                  <div
+                    className="skel"
+                    style={{ width: 32, height: 32, borderRadius: "50%" }}
+                  />
                   <div className="skel" style={{ height: 14, width: 120 }} />
                 </span>
-                <div className="skel" style={{ flex: 1, height: 8, margin: "0 12px" }} />
+                <div
+                  className="skel"
+                  style={{ flex: 1, height: 8, margin: "0 12px" }}
+                />
                 <div className="skel" style={{ height: 14, width: 80 }} />
               </div>
             ))}
@@ -896,7 +1122,9 @@ function Dashboard({ bill, people, split, setView, currentUser, loading }) {
     <section className="dashboard-grid">
       <div className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">{firstName ? `Hi, ${firstName} 👋` : "Active session"}</p>
+          <p className="eyebrow">
+            {firstName ? `Hi, ${firstName} 👋` : "Active session"}
+          </p>
           <h2>{bill.merchant || "Ready to split?"}</h2>
           <p>
             {hasBill
@@ -908,7 +1136,9 @@ function Dashboard({ bill, people, split, setView, currentUser, loading }) {
         {/* stat row — always visible */}
         <div className="hero-stats">
           <div className="hstat">
-            <span className="hstat-val">{formatMoney(bill.total, bill.currency)}</span>
+            <span className="hstat-val">
+              {formatMoney(bill.total, bill.currency)}
+            </span>
             <span className="hstat-label">Bill total</span>
           </div>
           <div className="hstat-sep" />
@@ -955,7 +1185,10 @@ function Dashboard({ bill, people, split, setView, currentUser, loading }) {
                   {person.name}
                 </span>
                 <div className="settlement-bar-wrap">
-                  <div className="settlement-bar" style={{ width: `${pct}%` }} />
+                  <div
+                    className="settlement-bar"
+                    style={{ width: `${pct}%` }}
+                  />
                 </div>
                 <strong>{formatMoney(person.total, bill.currency)}</strong>
               </div>
@@ -977,7 +1210,9 @@ function UploadView({ onAnalyze, onMerge, loading }) {
     if (!incoming?.length) return;
     setQueue((prev) => {
       const existing = new Set(prev.map((f) => f.name + f.size));
-      const fresh = Array.from(incoming).filter((f) => !existing.has(f.name + f.size));
+      const fresh = Array.from(incoming).filter(
+        (f) => !existing.has(f.name + f.size),
+      );
       return [...prev, ...fresh];
     });
   }
@@ -1040,12 +1275,20 @@ function UploadView({ onAnalyze, onMerge, loading }) {
         <div className="uzv2-queue">
           {queue.map((f, i) => (
             <div key={i} className="uzv2-pill">
-              <span className="uzv2-pill-icon">{f.type.startsWith("image/") ? "🖼️" : "📄"}</span>
+              <span className="uzv2-pill-icon">
+                {f.type.startsWith("image/") ? "🖼️" : "📄"}
+              </span>
               <span className="uzv2-pill-name" title={f.name}>
                 {f.name}
               </span>
-              <span className="uzv2-pill-size">{(f.size / 1024).toFixed(0)} KB</span>
-              <button className="uzv2-pill-remove" onClick={() => removeFile(i)} aria-label={`Remove ${f.name}`}>
+              <span className="uzv2-pill-size">
+                {(f.size / 1024).toFixed(0)} KB
+              </span>
+              <button
+                className="uzv2-pill-remove"
+                onClick={() => removeFile(i)}
+                aria-label={`Remove ${f.name}`}
+              >
                 <X size={12} />
               </button>
             </div>
@@ -1058,7 +1301,12 @@ function UploadView({ onAnalyze, onMerge, loading }) {
         <label className="uzv2-add-btn">
           <Plus size={16} />
           {queue.length === 0 ? "Choose file" : "Add more"}
-          <input type="file" accept="image/*,.txt,.csv,.json" multiple onChange={(e) => addFiles(e.target.files)} />
+          <input
+            type="file"
+            accept="image/*,.txt,.csv,.json"
+            multiple
+            onChange={(e) => addFiles(e.target.files)}
+          />
         </label>
 
         {queue.length > 0 && (
@@ -1095,7 +1343,8 @@ function UploadView({ onAnalyze, onMerge, loading }) {
       {/* ── Multi-bill tip ── */}
       {queue.length === 1 && (
         <p className="uzv2-tip">
-          <FilePlus2 size={13} /> Add more files to merge multiple bills into one session
+          <FilePlus2 size={13} /> Add more files to merge multiple bills into
+          one session
         </p>
       )}
     </section>
@@ -1122,9 +1371,18 @@ function SkeletonBill() {
       <div className="skeleton-items">
         {[1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="skeleton-item-row">
-            <div className="skel skel-name" style={{ animationDelay: `${i * 80}ms` }} />
-            <div className="skel skel-num" style={{ animationDelay: `${i * 80 + 40}ms` }} />
-            <div className="skel skel-num" style={{ animationDelay: `${i * 80 + 80}ms` }} />
+            <div
+              className="skel skel-name"
+              style={{ animationDelay: `${i * 80}ms` }}
+            />
+            <div
+              className="skel skel-num"
+              style={{ animationDelay: `${i * 80 + 40}ms` }}
+            />
+            <div
+              className="skel skel-num"
+              style={{ animationDelay: `${i * 80 + 80}ms` }}
+            />
           </div>
         ))}
       </div>
@@ -1137,7 +1395,15 @@ function SkeletonBill() {
 
 /* ─────────────────── Split view ─────────────────── */
 
-function SplitView({ bill, people, split, loading, insight, insightLoading, locked = false }) {
+function SplitView({
+  bill,
+  people,
+  split,
+  loading,
+  insight,
+  insightLoading,
+  locked = false,
+}) {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState("details");
   const [smartState, setSmartState] = useState(null); // null | { loading } | { suggestions }
@@ -1171,12 +1437,16 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
   function clearAllAssignees() {
     bill.items.forEach((item) => {
       item.assignedTo.forEach((personId) => {
-        dispatch(splitwiserActions.toggleAssignee({ itemId: item.id, personId }));
+        dispatch(
+          splitwiserActions.toggleAssignee({ itemId: item.id, personId }),
+        );
       });
     });
   }
 
-  const unassignedCount = bill.items.filter((i) => i.assignedTo.length === 0).length;
+  const unassignedCount = bill.items.filter(
+    (i) => i.assignedTo.length === 0,
+  ).length;
 
   if (loading) return <SkeletonBill />;
 
@@ -1219,27 +1489,39 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
               label="Merchant"
               value={bill.merchant}
               readOnly={locked}
-              onChange={(v) => dispatch(splitwiserActions.updateBill({ merchant: v }))}
+              onChange={(v) =>
+                dispatch(splitwiserActions.updateBill({ merchant: v }))
+              }
             />
             <Field
               label="Date"
               type="date"
               value={bill.date}
               readOnly={locked}
-              onChange={(v) => dispatch(splitwiserActions.updateBill({ date: v }))}
+              onChange={(v) =>
+                dispatch(splitwiserActions.updateBill({ date: v }))
+              }
             />
             <Field
               label="Currency"
               value={bill.currency}
               readOnly={locked}
-              onChange={(v) => dispatch(splitwiserActions.updateBill({ currency: v.toUpperCase() }))}
+              onChange={(v) =>
+                dispatch(
+                  splitwiserActions.updateBill({ currency: v.toUpperCase() }),
+                )
+              }
             />
             <Field
               label="Tax"
               type="number"
               value={bill.tax}
               readOnly={locked}
-              onChange={(v) => dispatch(splitwiserActions.updateBill({ tax: normalizeNumber(v) }))}
+              onChange={(v) =>
+                dispatch(
+                  splitwiserActions.updateBill({ tax: normalizeNumber(v) }),
+                )
+              }
             />
             <Field
               label="Service charge"
@@ -1276,8 +1558,13 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
               <div className="auto-assign-info">
                 {unassignedCount > 0 ? (
                   <>
-                    <span className="badge-warn">{unassignedCount} unassigned</span>
-                    <span className="muted"> — split unassigned equally among all</span>
+                    <span className="badge-warn">
+                      {unassignedCount} unassigned
+                    </span>
+                    <span className="muted">
+                      {" "}
+                      — split unassigned equally among all
+                    </span>
                   </>
                 ) : (
                   <span className="badge-ok">All items assigned</span>
@@ -1298,7 +1585,10 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
                     {smartState?.loading ? "Thinking…" : "Smart assign"}
                   </button>
                 )} */}
-                <button className="btn-auto ghost-sm" onClick={clearAllAssignees}>
+                <button
+                  className="btn-auto ghost-sm"
+                  onClick={clearAllAssignees}
+                >
                   <RotateCcw size={13} /> Clear
                 </button>
               </div>
@@ -1308,13 +1598,20 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
           <div className="items">
             {bill.items.length > 1 && <DuplicateWarning items={bill.items} />}
             {smartState?.error && (
-              <div className="anomaly-item anomaly-error" style={{ marginBottom: 8 }}>
+              <div
+                className="anomaly-item anomaly-error"
+                style={{ marginBottom: 8 }}
+              >
                 <AlertTriangle size={13} />
                 <span>Smart assign failed: {smartState.error}</span>
               </div>
             )}
             {bill.items.length === 0 && (
-              <EmptyState icon={ReceiptText} title="No items" message="Upload a bill or add line items manually." />
+              <EmptyState
+                icon={ReceiptText}
+                title="No items"
+                message="Upload a bill or add line items manually."
+              />
             )}
             {bill.items.length > 0 && (
               <div className="item-header">
@@ -1371,7 +1668,9 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
                   />
                   <button
                     className="icon-btn danger"
-                    onClick={() => dispatch(splitwiserActions.removeItem(item.id))}
+                    onClick={() =>
+                      dispatch(splitwiserActions.removeItem(item.id))
+                    }
                     aria-label="Remove"
                     style={locked ? { visibility: "hidden" } : undefined}
                     disabled={locked}
@@ -1381,9 +1680,18 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
                 </div>
                 <div className="item-assignees">
                   <span className="item-tag-pill">{getItemTag(item.name)}</span>
-                  {people.length === 0 && <span className="muted">Add people to assign.</span>}
+                  {people.length === 0 && (
+                    <span className="muted">Add people to assign.</span>
+                  )}
                   {people.map((person) => (
-                    <label key={person.id} className={item.assignedTo.includes(person.id) ? "chip selected" : "chip"}>
+                    <label
+                      key={person.id}
+                      className={
+                        item.assignedTo.includes(person.id)
+                          ? "chip selected"
+                          : "chip"
+                      }
+                    >
                       <input
                         type="checkbox"
                         checked={item.assignedTo.includes(person.id)}
@@ -1422,7 +1730,8 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
               />
             )}
             {split.map((person) => {
-              const pct = bill.total > 0 ? (person.total / bill.total) * 100 : 0;
+              const pct =
+                bill.total > 0 ? (person.total / bill.total) * 100 : 0;
               return (
                 <div key={person.id} className="pay-card">
                   <div className="pay-card-left">
@@ -1451,8 +1760,16 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
               const item = bill.items.find((i) => i.id === itemId);
               if (!item) return;
               // clear existing first
-              item.assignedTo.forEach((pid) => dispatch(splitwiserActions.toggleAssignee({ itemId, personId: pid })));
-              personIds.forEach((pid) => dispatch(splitwiserActions.toggleAssignee({ itemId, personId: pid })));
+              item.assignedTo.forEach((pid) =>
+                dispatch(
+                  splitwiserActions.toggleAssignee({ itemId, personId: pid }),
+                ),
+              );
+              personIds.forEach((pid) =>
+                dispatch(
+                  splitwiserActions.toggleAssignee({ itemId, personId: pid }),
+                ),
+              );
             });
             setSmartState(null);
           }}
@@ -1463,28 +1780,48 @@ function SplitView({ bill, people, split, loading, insight, insightLoading, lock
   );
 }
 
-function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) {
+function SettleView({
+  split,
+  bill,
+  people,
+  onShareOpen,
+  currentUser,
+  loading,
+}) {
   const dispatch = useDispatch();
-  const { mode, singleId, customAmounts, settled } = useSelector((s) => s.splitwiser.settle);
+  const { mode, singleId, customAmounts, settled } = useSelector(
+    (s) => s.splitwiser.settle,
+  );
   const { activeSession } = useSelector((s) => s.splitwiser);
   const [qrTransaction, setQrTransaction] = useState(null);
   const [noUpiName, setNoUpiName] = useState(null);
   const [saveState, setSaveState] = useState(null); // null | "saving" | { id } | { error }
 
-  const grandTotal = Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
+  const grandTotal =
+    Math.round(split.reduce((s, p) => s + p.total, 0) * 100) / 100;
 
   const paymentAmounts = useMemo(() => {
     if (mode === "single") return singleId ? { [singleId]: grandTotal } : {};
-    if (mode === "own") return Object.fromEntries(split.map((p) => [p.id, p.total]));
+    if (mode === "own")
+      return Object.fromEntries(split.map((p) => [p.id, p.total]));
     if (mode === "custom") return customAmounts;
     return {};
   }, [mode, singleId, grandTotal, split, customAmounts]);
 
-  const transactions = useMemo(() => simplifyDebts(split, paymentAmounts), [split, paymentAmounts]);
-  const totalPaid = Object.values(paymentAmounts).reduce((s, v) => s + normalizeNumber(v), 0);
+  const transactions = useMemo(
+    () => simplifyDebts(split, paymentAmounts),
+    [split, paymentAmounts],
+  );
+  const totalPaid = Object.values(paymentAmounts).reduce(
+    (s, v) => s + normalizeNumber(v),
+    0,
+  );
   const paidDiff = totalPaid - grandTotal;
-  const hasEnteredAny = mode === "custom" && Object.values(customAmounts).some((v) => normalizeNumber(v) > 0);
-  const hasPayments = mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
+  const hasEnteredAny =
+    mode === "custom" &&
+    Object.values(customAmounts).some((v) => normalizeNumber(v) > 0);
+  const hasPayments =
+    mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
   const settledCount = Object.values(settled).filter(Boolean).length;
 
   if (loading) {
@@ -1492,19 +1829,40 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
       <div className="settle-view">
         <div className="settle-hc">
           <div className="settle-hc-left">
-            <div className="skel" style={{ height: 14, width: 160, marginBottom: 10 }} />
-            <div className="skel" style={{ height: 28, width: 220, marginBottom: 8 }} />
+            <div
+              className="skel"
+              style={{ height: 14, width: 160, marginBottom: 10 }}
+            />
+            <div
+              className="skel"
+              style={{ height: 28, width: 220, marginBottom: 8 }}
+            />
             <div className="skel" style={{ height: 13, width: 180 }} />
           </div>
         </div>
         <div className="scenario-cards">
           {[1, 2, 3].map((i) => (
-            <div key={i} className="skel" style={{ height: 72, borderRadius: 12 }} />
+            <div
+              key={i}
+              className="skel"
+              style={{ height: 72, borderRadius: 12 }}
+            />
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            marginTop: 16,
+          }}
+        >
           {[1, 2].map((i) => (
-            <div key={i} className="skel" style={{ height: 64, borderRadius: 12 }} />
+            <div
+              key={i}
+              className="skel"
+              style={{ height: 64, borderRadius: 12 }}
+            />
           ))}
         </div>
       </div>
@@ -1555,7 +1913,9 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
   function fillAllExact() {
     dispatch(
       splitwiserActions.setSettleCustomAmounts(
-        Object.fromEntries(split.map((p) => [p.id, Number(p.total.toFixed(2))])),
+        Object.fromEntries(
+          split.map((p) => [p.id, Number(p.total.toFixed(2))]),
+        ),
       ),
     );
   }
@@ -1563,7 +1923,9 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
   function fillAllEqual() {
     const each = people.length ? grandTotal / people.length : 0;
     dispatch(
-      splitwiserActions.setSettleCustomAmounts(Object.fromEntries(people.map((p) => [p.id, Number(each.toFixed(2))]))),
+      splitwiserActions.setSettleCustomAmounts(
+        Object.fromEntries(people.map((p) => [p.id, Number(each.toFixed(2))])),
+      ),
     );
   }
 
@@ -1621,7 +1983,8 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
     window.location.href = gpayLink;
   }
 
-  const allSettled = transactions.length > 0 && settledCount === transactions.length;
+  const allSettled =
+    transactions.length > 0 && settledCount === transactions.length;
   const settledAmount = transactions
     .filter((tx) => !!settled[`${tx.from.id}-${tx.to.id}`])
     .reduce((s, tx) => s + tx.amount, 0);
@@ -1638,7 +2001,9 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
           <div>
             <div className="settle-hc-label">Total to settle</div>
             <div className="settle-hc-amount">
-              {allSettled ? formatMoney(0, bill.currency) : formatMoney(remainingAmount, bill.currency)}
+              {allSettled
+                ? formatMoney(0, bill.currency)
+                : formatMoney(remainingAmount, bill.currency)}
             </div>
             <div className="settle-hc-sub">
               {allSettled
@@ -1656,38 +2021,49 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                 <div
                   className="settle-progress-fill"
                   style={{
-                    width: hasPayments && transactions.length ? `${(settledCount / transactions.length) * 100}%` : "0%",
+                    width:
+                      hasPayments && transactions.length
+                        ? `${(settledCount / transactions.length) * 100}%`
+                        : "0%",
                   }}
                 />
               </div>
             </div>
             <div className="settle-hc-actions">
-              {hasPayments && !(transactions.length > 0 && settledCount === transactions.length) && (
-                <button
-                  className={`ghost settle-save-btn${saveState?.id ? " saved" : ""}`}
-                  onClick={saveState?.error ? () => setSaveState(null) : handleSaveExpense}
-                  disabled={saveState === "saving" || !!saveState?.id}
-                  title={saveState?.error || undefined}
-                >
-                  {saveState === "saving" ? (
-                    <>
-                      <span className="mini-spinner" /> Saving…
-                    </>
-                  ) : saveState?.id ? (
-                    <>
-                      <CheckCircle2 size={14} /> Saved
-                    </>
-                  ) : saveState?.error ? (
-                    <>
-                      <AlertCircle size={14} /> Retry
-                    </>
-                  ) : (
-                    <>
-                      <Zap size={14} /> Save split
-                    </>
-                  )}
-                </button>
-              )}
+              {hasPayments &&
+                !(
+                  transactions.length > 0 &&
+                  settledCount === transactions.length
+                ) && (
+                  <button
+                    className={`ghost settle-save-btn${saveState?.id ? " saved" : ""}`}
+                    onClick={
+                      saveState?.error
+                        ? () => setSaveState(null)
+                        : handleSaveExpense
+                    }
+                    disabled={saveState === "saving" || !!saveState?.id}
+                    title={saveState?.error || undefined}
+                  >
+                    {saveState === "saving" ? (
+                      <>
+                        <span className="mini-spinner" /> Saving…
+                      </>
+                    ) : saveState?.id ? (
+                      <>
+                        <CheckCircle2 size={14} /> Saved
+                      </>
+                    ) : saveState?.error ? (
+                      <>
+                        <AlertCircle size={14} /> Retry
+                      </>
+                    ) : (
+                      <>
+                        <Zap size={14} /> Save split
+                      </>
+                    )}
+                  </button>
+                )}
               {!allSettled && (
                 <button
                   className="ghost settle-share-btn"
@@ -1697,7 +2073,9 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                 </button>
               )}
             </div>
-            {saveState?.error && <p className="settle-save-error">{saveState.error}</p>}
+            {saveState?.error && (
+              <p className="settle-save-error">{saveState.error}</p>
+            )}
           </div>
         )}
       </div>
@@ -1728,29 +2106,46 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
         <div className="settle-payer-row panel">
           <div className="settle-panel-label">
             <Banknote size={15} />
-            <span>Who paid the full {formatMoney(grandTotal, bill.currency)}?</span>
+            <span>
+              Who paid the full {formatMoney(grandTotal, bill.currency)}?
+            </span>
           </div>
           <div className="settle-single-grid">
             {people.length === 0 && (
-              <EmptyState icon={Users} title="No participants" message="Add people in the People tab first." compact />
+              <EmptyState
+                icon={Users}
+                title="No participants"
+                message="Add people in the People tab first."
+                compact
+              />
             )}
             {people.map((p) => {
-              const allSettled = transactions.length > 0 && settledCount === transactions.length;
+              const allSettled =
+                transactions.length > 0 && settledCount === transactions.length;
               return (
                 <button
                   key={p.id}
                   className={`payer-person-btn${singleId === p.id ? " selected" : ""}${allSettled && singleId !== p.id ? " disabled" : ""}`}
                   onClick={() =>
-                    !allSettled && dispatch(splitwiserActions.setSettleSingleId(singleId === p.id ? null : p.id))
+                    !allSettled &&
+                    dispatch(
+                      splitwiserActions.setSettleSingleId(
+                        singleId === p.id ? null : p.id,
+                      ),
+                    )
                   }
                   disabled={allSettled && singleId !== p.id}
                 >
                   <Avatar name={p.name} />
                   <div className="ppb-info">
                     <span className="ppb-name">{p.name}</span>
-                    <span className="ppb-amount">{formatMoney(grandTotal, bill.currency)}</span>
+                    <span className="ppb-amount">
+                      {formatMoney(grandTotal, bill.currency)}
+                    </span>
                   </div>
-                  {singleId === p.id && <Check size={14} className="ppb-check" />}
+                  {singleId === p.id && (
+                    <Check size={14} className="ppb-check" />
+                  )}
                 </button>
               );
             })}
@@ -1763,21 +2158,29 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
         <div className="own-share-card panel">
           <div className="own-share-rows">
             {people.length === 0 && (
-              <EmptyState icon={Users} title="No participants" message="Add people in the People tab first." compact />
+              <EmptyState
+                icon={Users}
+                title="No participants"
+                message="Add people in the People tab first."
+                compact
+              />
             )}
             {split.map((p) => (
               <div key={p.id} className="own-share-row">
                 <Avatar name={p.name} />
                 <span className="own-share-name">{p.name}</span>
                 <span className="own-share-label">paid their share</span>
-                <strong className="own-share-amount">{formatMoney(p.total, bill.currency)}</strong>
+                <strong className="own-share-amount">
+                  {formatMoney(p.total, bill.currency)}
+                </strong>
                 <CheckCircle2 size={15} className="own-share-tick" />
               </div>
             ))}
           </div>
           {people.length > 0 && (
             <p className="own-share-note">
-              If anyone actually paid more or less, switch to <strong>Custom amounts</strong> instead.
+              If anyone actually paid more or less, switch to{" "}
+              <strong>Custom amounts</strong> instead.
             </p>
           )}
         </div>
@@ -1788,8 +2191,10 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
         <div className="multi-payer-card panel">
           <div className="multi-payer-head">
             <p className="multi-payer-desc">
-              For each person, enter how much they <strong>physically paid</strong> (the bill they paid at the counter).
-              Leave at <strong>0</strong> if they paid nothing upfront.
+              For each person, enter how much they{" "}
+              <strong>physically paid</strong> (the bill they paid at the
+              counter). Leave at <strong>0</strong> if they paid nothing
+              upfront.
             </p>
             <div className="multi-payer-presets">
               {!allSettled && (
@@ -1807,7 +2212,12 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
 
           <div className="payer-table">
             {people.length === 0 && (
-              <EmptyState icon={Users} title="No participants" message="Add people in the People tab first." compact />
+              <EmptyState
+                icon={Users}
+                title="No participants"
+                message="Add people in the People tab first."
+                compact
+              />
             )}
             {split.map((p) => {
               const paid = normalizeNumber(customAmounts[p.id] ?? 0);
@@ -1815,15 +2225,23 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
               const diff = hasPaid ? paid - p.total : null;
               const chipNone = hasPaid && paid === 0;
               const chipShare = hasPaid && Math.abs(paid - p.total) < 0.5;
-              const chipAll = hasPaid && Math.abs(paid - grandTotal) < 0.5 && grandTotal !== p.total;
+              const chipAll =
+                hasPaid &&
+                Math.abs(paid - grandTotal) < 0.5 &&
+                grandTotal !== p.total;
               return (
-                <div key={p.id} className={`payer-row-v2${hasPaid ? " has-value" : ""}`}>
+                <div
+                  key={p.id}
+                  className={`payer-row-v2${hasPaid ? " has-value" : ""}`}
+                >
                   {/* top row: avatar + name + input */}
                   <div className="prv2-top">
                     <Avatar name={p.name} />
                     <div className="prv2-person">
                       <span className="prv2-name">{p.name}</span>
-                      <span className="prv2-share">owes {formatMoney(p.total, bill.currency)}</span>
+                      <span className="prv2-share">
+                        owes {formatMoney(p.total, bill.currency)}
+                      </span>
                     </div>
                     <div className="prv2-input-group">
                       <span className="prv2-ccy">{bill.currency}</span>
@@ -1835,11 +2253,17 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                         min="0"
                         step="0.01"
                         readOnly={allSettled}
-                        onChange={allSettled ? undefined : (e) => setPersonPaid(p.id, e.target.value)}
+                        onChange={
+                          allSettled
+                            ? undefined
+                            : (e) => setPersonPaid(p.id, e.target.value)
+                        }
                       />
                     </div>
                     {diff !== null && (
-                      <span className={`payer-diff${diff > 0.5 ? " pos" : diff < -0.5 ? " neg" : " zero"}`}>
+                      <span
+                        className={`payer-diff${diff > 0.5 ? " pos" : diff < -0.5 ? " neg" : " zero"}`}
+                      >
                         {diff > 0.5
                           ? `+${formatMoney(diff, bill.currency)} extra`
                           : diff < -0.5
@@ -1853,14 +2277,18 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                     <button
                       className={`prv2-chip${chipNone ? " active" : ""}`}
                       disabled={allSettled}
-                      onClick={allSettled ? undefined : () => setPersonPaid(p.id, 0)}
+                      onClick={
+                        allSettled ? undefined : () => setPersonPaid(p.id, 0)
+                      }
                     >
                       Paid nothing
                     </button>
                     <button
                       className={`prv2-chip accent${chipShare ? " active" : ""}`}
                       disabled={allSettled}
-                      onClick={allSettled ? undefined : () => fillExactShare(p.id)}
+                      onClick={
+                        allSettled ? undefined : () => fillExactShare(p.id)
+                      }
                     >
                       {formatMoney(p.total, bill.currency)} (their share)
                     </button>
@@ -1890,13 +2318,17 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
           </div>
 
           {hasEnteredAny && (
-            <div className={`payment-total-row${Math.abs(paidDiff) > 0.5 ? " mismatch" : " match"}`}>
+            <div
+              className={`payment-total-row${Math.abs(paidDiff) > 0.5 ? " mismatch" : " match"}`}
+            >
               <span>Total entered</span>
               <span>
                 <strong>{formatMoney(totalPaid, bill.currency)}</strong>
                 {Math.abs(paidDiff) > 0.5 ? (
                   <span className="payment-diff-label">
-                    {paidDiff > 0 ? ` — ₹${paidDiff.toFixed(0)} over` : ` — ₹${(-paidDiff).toFixed(0)} short`}
+                    {paidDiff > 0
+                      ? ` — ₹${paidDiff.toFixed(0)} over`
+                      : ` — ₹${(-paidDiff).toFixed(0)} short`}
                   </span>
                 ) : (
                   <span className="payment-ok-label"> = bill total ✓</span>
@@ -1917,13 +2349,16 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
       )}
 
       {/* ── All settled ── */}
-      {hasPayments && split.length > 0 && transactions.length === 0 && settledCount === 0 && (
-        <div className="settle-all-done">
-          <CheckCircle2 size={40} />
-          <strong>All settled up!</strong>
-          <p>No transfers needed — everyone is even.</p>
-        </div>
-      )}
+      {hasPayments &&
+        split.length > 0 &&
+        transactions.length === 0 &&
+        settledCount === 0 && (
+          <div className="settle-all-done">
+            <CheckCircle2 size={40} />
+            <strong>All settled up!</strong>
+            <p>No transfers needed — everyone is even.</p>
+          </div>
+        )}
       {transactions.length > 0 && settledCount === transactions.length && (
         <div className="settle-all-done">
           <CheckCircle2 size={40} />
@@ -1938,7 +2373,11 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
         .map((tx, i) => {
           const key = `${tx.from.id}-${tx.to.id}`;
           return (
-            <div key={key} className="txn-card" style={{ animationDelay: `${i * 60}ms` }}>
+            <div
+              key={key}
+              className="txn-card"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
               <div className="txn-avatars">
                 <Avatar name={tx.from.name} />
                 <div className="txn-arrow">
@@ -1952,26 +2391,39 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                   <span className="txn-pays"> pays </span>
                   <span className="txn-to">{tx.to.name}</span>
                 </div>
-                <div className="txn-amount">{formatMoney(tx.amount, bill.currency)}</div>
+                <div className="txn-amount">
+                  {formatMoney(tx.amount, bill.currency)}
+                </div>
               </div>
               <div className="txn-actions">
                 {(() => {
                   const recipient = people.find((p) => p.id === tx.to.id);
                   const upiId = recipient?.upiId;
-                  const gpayLink = upiId ? buildGpayLink(upiId, tx.to.name, tx.amount, bill.currency) : null;
-                  const upiLink = upiId ? buildUpiLink(upiId, tx.to.name, tx.amount, bill.currency) : null;
+                  const gpayLink = upiId
+                    ? buildGpayLink(upiId, tx.to.name, tx.amount, bill.currency)
+                    : null;
+                  const upiLink = upiId
+                    ? buildUpiLink(upiId, tx.to.name, tx.amount, bill.currency)
+                    : null;
                   const handlePayNow = !upiId
                     ? () => setNoUpiName(tx.to.name)
                     : isMobile && gpayLink
                       ? () => openUpiWithGpayFallback(gpayLink, upiLink)
                       : () => setQrTransaction(tx);
                   return (
-                    <button className="txn-pay-btn" onClick={handlePayNow} aria-label="Pay via UPI">
+                    <button
+                      className="txn-pay-btn"
+                      onClick={handlePayNow}
+                      aria-label="Pay via UPI"
+                    >
                       <QrCode size={13} /> Pay now
                     </button>
                   );
                 })()}
-                <button className="txn-settle-btn" onClick={() => toggleSettled(key)}>
+                <button
+                  className="txn-settle-btn"
+                  onClick={() => toggleSettled(key)}
+                >
                   Mark settled
                 </button>
               </div>
@@ -1979,17 +2431,29 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
           );
         })}
       {qrTransaction && (
-        <UpiQrModal transaction={qrTransaction} bill={bill} people={people} onClose={() => setQrTransaction(null)} />
+        <UpiQrModal
+          transaction={qrTransaction}
+          bill={bill}
+          people={people}
+          onClose={() => setQrTransaction(null)}
+        />
       )}
       {noUpiName && (
         <div className="modal-overlay" onClick={() => setNoUpiName(null)}>
-          <div className="modal no-upi-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal no-upi-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
               <div className="modal-title">
                 <QrCode size={16} />
                 <span>No UPI ID</span>
               </div>
-              <button className="icon-btn" onClick={() => setNoUpiName(null)} aria-label="Close">
+              <button
+                className="icon-btn"
+                onClick={() => setNoUpiName(null)}
+                aria-label="Close"
+              >
                 <X size={15} />
               </button>
             </div>
@@ -1998,8 +2462,8 @@ function SettleView({ split, bill, people, onShareOpen, currentUser, loading }) 
                 <strong>{noUpiName}</strong> doesn't have a UPI ID saved yet.
               </p>
               <p className="no-upi-hint">
-                Go to the <strong>People</strong> tab and add their UPI ID (e.g. <code>name@okaxis</code>) to enable
-                direct payment.
+                Go to the <strong>People</strong> tab and add their UPI ID (e.g.{" "}
+                <code>name@okaxis</code>) to enable direct payment.
               </p>
             </div>
           </div>
@@ -2042,7 +2506,11 @@ function UserSearch({ onAdd, existingSupabaseIds }) {
     <div className="user-search">
       <div className="user-search-input-wrap">
         <Search size={15} />
-        <input placeholder="Search people by name to add…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input
+          placeholder="Search people by name to add…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         {searching && <span className="user-search-spinner" />}
       </div>
       {results.length > 0 && (
@@ -2068,7 +2536,9 @@ function UserSearch({ onAdd, existingSupabaseIds }) {
         </div>
       )}
       {query.length >= 2 && !searching && results.length === 0 && (
-        <p className="user-search-empty">No users found for &ldquo;{query}&rdquo;</p>
+        <p className="user-search-empty">
+          No users found for &ldquo;{query}&rdquo;
+        </p>
       )}
     </div>
   );
@@ -2092,31 +2562,43 @@ function PeopleView({ people, currentUser }) {
     <section className="panel">
       <div className="section-head">
         <h3>Participants</h3>
-        {currentUser && !people.some((p) => p.supabaseId === currentUser.id) && (
-          <button
-            className="ghost"
-            style={{ fontSize: 12, minHeight: 32, padding: "0 10px" }}
-            onClick={() => handleAddUser(currentUser)}
-          >
-            <Plus size={13} /> Add me
-          </button>
-        )}
+        {currentUser &&
+          !people.some((p) => p.supabaseId === currentUser.id) && (
+            <button
+              className="ghost"
+              style={{ fontSize: 12, minHeight: 32, padding: "0 10px" }}
+              onClick={() => handleAddUser(currentUser)}
+            >
+              <Plus size={13} /> Add me
+            </button>
+          )}
       </div>
-      <UserSearch onAdd={handleAddUser} existingSupabaseIds={people.map((p) => p.supabaseId).filter(Boolean)} />
+      <UserSearch
+        onAdd={handleAddUser}
+        existingSupabaseIds={people.map((p) => p.supabaseId).filter(Boolean)}
+      />
       <div className="people-grid">
         {people.length === 0 && (
-          <EmptyState icon={Users} title="No people added" message="Search and add people who shared the bill." />
+          <EmptyState
+            icon={Users}
+            title="No people added"
+            message="Search and add people who shared the bill."
+          />
         )}
         {people.map((person) => (
           <div className="person-card" key={person.id}>
             <Avatar name={person.name} />
             <div className="person-inputs">
               <span className="person-name-text">{person.name}</span>
-              {person.upiId && <span className="person-upi-text">{person.upiId}</span>}
+              {person.upiId && (
+                <span className="person-upi-text">{person.upiId}</span>
+              )}
             </div>
             <button
               className="icon-btn danger"
-              onClick={() => dispatch(splitwiserActions.removePerson(person.id))}
+              onClick={() =>
+                dispatch(splitwiserActions.removePerson(person.id))
+              }
               aria-label="Remove"
             >
               <Trash2 size={14} />
@@ -2134,7 +2616,12 @@ function Field({ label, value, onChange, type = "text", readOnly = false }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} readOnly={readOnly} onChange={(e) => !readOnly && onChange(e.target.value)} />
+      <input
+        type={type}
+        value={value}
+        readOnly={readOnly}
+        onChange={(e) => !readOnly && onChange(e.target.value)}
+      />
     </label>
   );
 }
@@ -2148,7 +2635,12 @@ function Avatar({ name, size }) {
       .map((p) => p[0]?.toUpperCase())
       .join("") || "?";
   return (
-    <span className="avatar" style={size ? { width: size, height: size, fontSize: size * 0.38 } : undefined}>
+    <span
+      className="avatar"
+      style={
+        size ? { width: size, height: size, fontSize: size * 0.38 } : undefined
+      }
+    >
       {initials}
     </span>
   );
@@ -2306,7 +2798,12 @@ function ShareMessageModal({ bill, people, split, onClose, shareData }) {
         {err && <div className="modal-error">{err}</div>}
         {!loading && !err && (
           <>
-            <textarea className="share-textarea" value={msg} onChange={(e) => setMsg(e.target.value)} rows={7} />
+            <textarea
+              className="share-textarea"
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              rows={7}
+            />
             <div className="modal-actions">
               <button onClick={copyMsg} className={copied ? "btn-success" : ""}>
                 {copied ? (
@@ -2358,19 +2855,26 @@ function UpiQrModal({ transaction, bill, people, onClose }) {
             </div>
             <Avatar name={transaction.to.name} />
           </div>
-          <div className="qr-amount-display">{formatMoney(transaction.amount, bill.currency)}</div>
+          <div className="qr-amount-display">
+            {formatMoney(transaction.amount, bill.currency)}
+          </div>
           {upiLink ? (
             <>
               <QRCodeSVG value={upiLink} size={220} />
               <small className="qr-hint">Scan with any UPI app to pay</small>
             </>
           ) : (
-            <div className="qr-placeholder" style={{ flexDirection: "column", gap: 8, padding: 16 }}>
+            <div
+              className="qr-placeholder"
+              style={{ flexDirection: "column", gap: 8, padding: 16 }}
+            >
               <QrCode size={32} style={{ opacity: 0.4 }} />
               <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
                 No UPI ID for <strong>{transaction.to.name}</strong>
               </span>
-              <small style={{ color: "var(--text-tertiary)" }}>Add a UPI ID in the People tab</small>
+              <small style={{ color: "var(--text-tertiary)" }}>
+                Add a UPI ID in the People tab
+              </small>
             </div>
           )}
         </div>
@@ -2387,9 +2891,16 @@ function SmartSplitModal({ suggestions, bill, people, onApply, onClose }) {
     const map = {};
     suggestions.forEach((s) => {
       const personIds = s.peopleNames
-        .map((name) => people.find((p) => p.name.toLowerCase().trim() === name.toLowerCase().trim())?.id)
+        .map(
+          (name) =>
+            people.find(
+              (p) => p.name.toLowerCase().trim() === name.toLowerCase().trim(),
+            )?.id,
+        )
         .filter(Boolean);
-      map[s.itemId] = new Set(personIds.length ? personIds : people.map((p) => p.id));
+      map[s.itemId] = new Set(
+        personIds.length ? personIds : people.map((p) => p.id),
+      );
     });
     return map;
   });
@@ -2430,7 +2941,9 @@ function SmartSplitModal({ suggestions, bill, people, onApply, onClose }) {
             <X size={15} />
           </button>
         </div>
-        <p className="smart-modal-hint">AI suggested these assignments. Adjust any chips then apply.</p>
+        <p className="smart-modal-hint">
+          AI suggested these assignments. Adjust any chips then apply.
+        </p>
         <div className="smart-item-list">
           {suggestions.map((s) => {
             const item = bill.items.find((i) => i.id === s.itemId);
@@ -2439,12 +2952,18 @@ function SmartSplitModal({ suggestions, bill, people, onApply, onClose }) {
             return (
               <div key={s.itemId} className="smart-item-row">
                 <div className="smart-item-top">
-                  <span className="smart-item-tag">{getItemTag(item.name)}</span>
+                  <span className="smart-item-tag">
+                    {getItemTag(item.name)}
+                  </span>
                   <div className="smart-item-info">
                     <span className="smart-item-name">{item.name}</span>
-                    <span className="smart-item-price">{formatMoney(item.price, bill.currency)}</span>
+                    <span className="smart-item-price">
+                      {formatMoney(item.price, bill.currency)}
+                    </span>
                   </div>
-                  {s.shared && <span className="smart-shared-badge">shared</span>}
+                  {s.shared && (
+                    <span className="smart-shared-badge">shared</span>
+                  )}
                 </div>
                 {s.reason && <p className="smart-item-reason">{s.reason}</p>}
                 <div className="smart-chips">
@@ -2507,8 +3026,12 @@ function ProfileBubble({ user, onSignOut }) {
             <Avatar name={user.name} size={36} />
             <div>
               <p className="profile-bubble-name">{user.name}</p>
-              {user.phone_number && <p className="profile-bubble-phone">{user.phone_number}</p>}
-              {user.upi_id && <p className="profile-bubble-upi">{user.upi_id}</p>}
+              {user.phone_number && (
+                <p className="profile-bubble-phone">{user.phone_number}</p>
+              )}
+              {user.upi_id && (
+                <p className="profile-bubble-upi">{user.upi_id}</p>
+              )}
             </div>
           </div>
           <div className="profile-bubble-divider" />
@@ -2557,7 +3080,8 @@ function AuthPage({ onAuth }) {
 
   async function handleSignIn(e) {
     e.preventDefault();
-    if (phone.length !== 10) return setError("Enter a valid 10-digit phone number.");
+    if (phone.length !== 10)
+      return setError("Enter a valid 10-digit phone number.");
     setLoading(true);
     setError("");
     try {
@@ -2578,11 +3102,16 @@ function AuthPage({ onAuth }) {
   async function handleSignUp(e) {
     e.preventDefault();
     if (!name.trim()) return setError("Name is required.");
-    if (phone.length !== 10) return setError("Enter a valid 10-digit phone number.");
+    if (phone.length !== 10)
+      return setError("Enter a valid 10-digit phone number.");
     setLoading(true);
     setError("");
     try {
-      const user = await signUp({ name: name.trim(), phone_number: fullPhone(), upi_id: upiId.trim() });
+      const user = await signUp({
+        name: name.trim(),
+        phone_number: fullPhone(),
+        upi_id: upiId.trim(),
+      });
       onAuth(user);
     } catch (err) {
       setError(err.message || "Sign up failed.");
@@ -2634,7 +3163,9 @@ function AuthPage({ onAuth }) {
         {/* Sign In Form */}
         {mode === "signin" && (
           <form className="auth-form" onSubmit={handleSignIn}>
-            <p className="auth-subtitle">Welcome back! Enter your phone number to continue.</p>
+            <p className="auth-subtitle">
+              Welcome back! Enter your phone number to continue.
+            </p>
             <div className="auth-field">
               <label htmlFor="si-phone">Phone number</label>
               <div className="auth-input-wrap auth-phone-wrap">
@@ -2664,7 +3195,11 @@ function AuthPage({ onAuth }) {
             </button>
             <p className="auth-switch">
               New here?{" "}
-              <button type="button" className="auth-link" onClick={() => switchMode("signup")}>
+              <button
+                type="button"
+                className="auth-link"
+                onClick={() => switchMode("signup")}
+              >
                 Create an account
               </button>
             </p>
@@ -2674,7 +3209,9 @@ function AuthPage({ onAuth }) {
         {/* Sign Up Form */}
         {mode === "signup" && (
           <form className="auth-form" onSubmit={handleSignUp}>
-            <p className="auth-subtitle">Create your account to start splitting bills with friends.</p>
+            <p className="auth-subtitle">
+              Create your account to start splitting bills with friends.
+            </p>
             <div className="auth-field">
               <label htmlFor="su-name">Full name</label>
               <div className="auth-input-wrap">
@@ -2734,7 +3271,11 @@ function AuthPage({ onAuth }) {
             </button>
             <p className="auth-switch">
               Already have an account?{" "}
-              <button type="button" className="auth-link" onClick={() => switchMode("signin")}>
+              <button
+                type="button"
+                className="auth-link"
+                onClick={() => switchMode("signin")}
+              >
                 Sign in
               </button>
             </p>
