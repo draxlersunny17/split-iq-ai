@@ -1885,8 +1885,25 @@ function SettleView({
     mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
   const settledCount = Object.values(settled).filter(Boolean).length;
 
-  // Notify parent whether there are unsaved changes
-  const isDirty = hasPayments && !saveState?.id && saveState !== "saving";
+  const mountSnapshotRef = useRef(null);
+  if (mountSnapshotRef.current === null) {
+    mountSnapshotRef.current = {
+      mode,
+      singleId,
+      customAmountsJson: JSON.stringify(customAmounts),
+    };
+  }
+  const snap = mountSnapshotRef.current;
+  const hasChangedSinceMount =
+    mode !== snap.mode ||
+    singleId !== snap.singleId ||
+    JSON.stringify(customAmounts) !== snap.customAmountsJson;
+
+  const isDirty =
+    hasPayments &&
+    hasChangedSinceMount &&
+    !saveState?.id &&
+    saveState !== "saving";
   useEffect(() => {
     onDirtyChange?.(isDirty);
   }, [isDirty]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1960,6 +1977,11 @@ function SettleView({
         groupId: activeSession?.groupId,
       });
       setSaveState({ id: expense.id });
+      mountSnapshotRef.current = {
+        mode,
+        singleId,
+        customAmountsJson: JSON.stringify(customAmounts),
+      };
     } catch (e) {
       setSaveState({ error: e.message || "Save failed" });
     }
