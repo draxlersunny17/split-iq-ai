@@ -1897,7 +1897,9 @@ function SettleView({
     Object.values(customAmounts).some((v) => normalizeNumber(v) > 0);
   const hasPayments =
     mode === "single" ? !!singleId : mode === "own" ? true : hasEnteredAny;
-  const settledCount = Object.values(settled).filter(Boolean).length;
+  const settledCount = transactions.filter(
+    (tx) => !!settled[`${tx.from.id}-${tx.to.id}`],
+  ).length;
 
   const mountSnapshotRef = useRef(null);
   if (mountSnapshotRef.current === null) {
