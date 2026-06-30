@@ -200,6 +200,7 @@ const appSlice = createSlice({
     },
     setSettleSingleId(state, action) {
       state.settle.singleId = action.payload;
+      state.settle.settled = {};
     },
     setSettleCustomAmount(state, action) {
       const { id, value } = action.payload;
